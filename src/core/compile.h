@@ -36,6 +36,15 @@ typedef enum {
     JANET_C_LINT_STRICT
 } JanetCompileLintLevel;
 
+/* Kinds of variable shadowing for linting */
+typedef enum {
+    JANETC_SHADOW_NONE,
+    JANETC_SHADOW_MACRO,
+    JANETC_SHADOW_GLOBAL_HIDES_GLOBAL,
+    JANETC_SHADOW_LOCAL_HIDES_GLOBAL,
+    JANETC_SHADOW_LOCAL_HIDES_LOCAL
+} Shadowing;
+
 /* Tags for some functions for the prepared inliner */
 #define JANET_FUN_DEBUG 1
 #define JANET_FUN_ERROR 2
@@ -97,7 +106,7 @@ typedef struct JanetSpecial JanetSpecial;
 struct JanetSlot {
     Janet constant; /* If the slot has a constant value */
     int32_t index;
-    int32_t envindex; /* 0 is local, positive number is an upvalue */
+    int32_t envindex; /* -1 is local, positive number is an upvalue */
     uint32_t flags;
 };
 
@@ -184,6 +193,10 @@ struct JanetCompiler {
 
     /* Collect linting results */
     JanetArray *lints;
+
+    /* Cached version of (dyn *redef*) and (dyn *optimize*) */
+    int is_redef;
+    int32_t optimize;
 };
 
 #define JANET_FOPTS_TAIL 0x10000
@@ -221,9 +234,11 @@ const JanetFunOptimizer *janetc_funopt(uint32_t flags);
 /* Get a special. Return NULL if none exists */
 const JanetSpecial *janetc_special(const uint8_t *name);
 
+#define JANET_DEFFLAG_NO_SHADOWCHECK 1
+#define JANET_DEFFLAG_NO_UNUSED 2
+
 void janetc_freeslot(JanetCompiler *c, JanetSlot s);
-void janetc_nameslot(JanetCompiler *c, const uint8_t *sym, JanetSlot s);
-void janetc_nameslot_no_unused(JanetCompiler *c, const uint8_t *sym, JanetSlot s);
+void janetc_nameslot(JanetCompiler *c, const uint8_t *sym, JanetSlot s, uint32_t flags);
 JanetSlot janetc_farslot(JanetCompiler *c);
 
 /* Throw away some code after checking that it is well formed. */
@@ -262,16 +277,22 @@ JanetSlot janetc_value(JanetFopts opts, Janet x);
 void janetc_scope(JanetScope *s, JanetCompiler *c, int flags, const char *name);
 void janetc_popscope(JanetCompiler *c);
 void janetc_popscope_keepslot(JanetCompiler *c, JanetSlot retslot);
-JanetFuncDef *janetc_pop_funcdef(JanetCompiler *c);
+JanetFuncDef *janetc_pop_funcdef(JanetCompiler *c, JanetString name);
 
 /* Create a destroy slot */
 JanetSlot janetc_cslot(Janet x);
 
-/* Search for a symbol */
+/* Search for a symbol, and mark any found symbols as "used" for dead code elimination and linting */
 JanetSlot janetc_resolve(JanetCompiler *c, const uint8_t *sym);
 
+/* Check if a symbol is already in scope for shadowing lints */
+Shadowing janetc_shadowcheck(JanetCompiler *c, const uint8_t *sym);
+
+/* Inlining. We can do inling both from bytecode and from our frontend */
+uint32_t *janet_bytecode_inline_chunk(JanetFuncDef *idef,
+                                      int32_t dest_slot, uint32_t slot_delta, uint32_t const_delta);
+
 /* Bytecode optimization */
-void janet_bytecode_movopt(JanetFuncDef *def);
-void janet_bytecode_remove_noops(JanetFuncDef *def);
+void janet_bytecode_optimize(JanetFuncDef *def, int32_t level);
 
 #endif

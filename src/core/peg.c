@@ -161,6 +161,7 @@ static LineCol get_linecol_from_position(PegState *s, int32_t position) {
 
 /* Convert a uint64_t to a int64_t by wrapping to a maximum number of bytes */
 static int64_t peg_convert_u64_s64(uint64_t from, int width) {
+    if (width == 0) return 0; /* Avoid undefined shift */
     int shift = 8 * (8 - width);
     return ((int64_t)(from << shift)) >> shift;
 }
@@ -1516,7 +1517,13 @@ static uint32_t peg_compile1(Builder *b, Janet peg) {
             int32_t n = peg_getinteger(b, peg);
             Reserve r = reserve(b, 2);
             if (n < 0) {
-                emit_1(r, RULE_NOTNCHAR, -n);
+                if (n == INT32_MIN) {
+                    /* Since buffers can't hold this many characters, will
+                     * always match. Avoid undefined behavior negating INT32_MIN. */
+                    emit_1(r, RULE_NCHAR, 0);
+                } else {
+                    emit_1(r, RULE_NOTNCHAR, -n);
+                }
             } else {
                 emit_1(r, RULE_NCHAR, n);
             }
@@ -1630,6 +1637,8 @@ static size_t size_padded(size_t offset, size_t size) {
     return x - (x % size);
 }
 
+#define OVERFLOW_CHECK(n) do { if (i > blen - (n)) goto bad; } while (0) /* overflow */
+
 static void *peg_unmarshal(JanetMarshalContext *ctx) {
     size_t bytecode_len = janet_unmarshal_size(ctx);
     uint32_t num_constants = (uint32_t) janet_unmarshal_int(ctx);
@@ -1682,6 +1691,7 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
         op_flags[i] |= 0x02;
         switch (instr) {
             case RULE_LITERAL:
+                OVERFLOW_CHECK(1); /* We only read rule[1] */
                 i += 2 + ((rule[1] + 3) >> 2);
                 break;
             case RULE_DEBUG:
@@ -1708,6 +1718,7 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
                 break;
             case RULE_LOOK:
                 /* [offset, rule] */
+                OVERFLOW_CHECK(3);
                 if (rule[2] >= blen) goto bad;
                 op_flags[rule[2]] |= 0x1;
                 i += 3;
@@ -1716,7 +1727,9 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
             case RULE_SEQUENCE:
                 /* [len, rules...] */
             {
+                OVERFLOW_CHECK(2);
                 uint32_t len = rule[1];
+                OVERFLOW_CHECK(2 + len);
                 for (uint32_t j = 0; j < len; j++) {
                     if (rule[2 + j] >= blen) goto bad;
                     op_flags[rule[2 + j]] |= 0x1;
@@ -1728,6 +1741,7 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
             case RULE_IFNOT:
             case RULE_LENPREFIX:
                 /* [rule_a, rule_b (b if not a)] */
+                OVERFLOW_CHECK(3);
                 if (rule[1] >= blen) goto bad;
                 if (rule[2] >= blen) goto bad;
                 op_flags[rule[1]] |= 0x01;
@@ -1736,6 +1750,7 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
                 break;
             case RULE_BETWEEN:
                 /* [lo, hi, rule] */
+                OVERFLOW_CHECK(4);
                 if (rule[3] >= blen) goto bad;
                 op_flags[rule[3]] |= 0x01;
                 i += 4;
@@ -1751,11 +1766,13 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
                 break;
             case RULE_CONSTANT:
                 /* [constant, tag] */
+                OVERFLOW_CHECK(3);
                 if (rule[1] >= clen) goto bad;
                 i += 3;
                 break;
             case RULE_CAPTURE_NUM:
                 /* [rule, base, tag] */
+                OVERFLOW_CHECK(4);
                 if (rule[1] >= blen) goto bad;
                 op_flags[rule[1]] |= 0x01;
                 i += 4;
@@ -1765,6 +1782,7 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
             case RULE_CAPTURE:
             case RULE_UNREF:
                 /* [rule, tag] */
+                OVERFLOW_CHECK(3);
                 if (rule[1] >= blen) goto bad;
                 op_flags[rule[1]] |= 0x01;
                 i += 3;
@@ -1773,6 +1791,7 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
             case RULE_MATCHTIME:
             case RULE_MATCHSPLICE:
                 /* [rule, constant, tag] */
+                OVERFLOW_CHECK(4);
                 if (rule[1] >= blen) goto bad;
                 if (rule[2] >= clen) goto bad;
                 op_flags[rule[1]] |= 0x01;
@@ -1782,6 +1801,7 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
             case RULE_TIL:
             case RULE_SPLIT:
                 /* [rule, rule] */
+                OVERFLOW_CHECK(3);
                 if (rule[1] >= blen) goto bad;
                 if (rule[2] >= blen) goto bad;
                 op_flags[rule[1]] |= 0x01;
@@ -1795,17 +1815,20 @@ static void *peg_unmarshal(JanetMarshalContext *ctx) {
             case RULE_TO:
             case RULE_THRU:
                 /* [rule] */
+                OVERFLOW_CHECK(2);
                 if (rule[1] >= blen) goto bad;
                 op_flags[rule[1]] |= 0x01;
                 i += 2;
                 break;
             case RULE_READINT:
                 /* [ width | (endianness << 5) | (signedness << 6), tag ] */
+                OVERFLOW_CHECK(3);
                 if (rule[1] > JANET_MAX_READINT_WIDTH) goto bad;
                 i += 3;
                 break;
             case RULE_NTH:
                 /* [nth, rule, tag] */
+                OVERFLOW_CHECK(4);
                 if (rule[2] >= blen) goto bad;
                 op_flags[rule[2]] |= 0x01;
                 i += 4;
@@ -1834,6 +1857,8 @@ bad:
     janet_free(op_flags);
     janet_panic("invalid peg bytecode");
 }
+
+#undef OVERFLOW_CHECK
 
 static int cfun_peg_getter(JanetAbstract a, Janet key, Janet *out);
 static Janet peg_next(void *p, Janet key);

@@ -519,8 +519,13 @@ static void historymove(int delta) {
         } else if (gbl_historyi >= gbl_history_count) {
             gbl_historyi = gbl_history_count - 1;
         }
+        gbl_len = (int) strlen(gbl_history[gbl_historyi]);
+        /* If history element is longer the JANET_LINE_MAX - 1, truncate */
+        if (gbl_len > JANET_LINE_MAX - 1) {
+            gbl_len = JANET_LINE_MAX - 1;
+        }
+        gbl_pos = gbl_len;
         strncpy(gbl_buf, gbl_history[gbl_historyi], JANET_LINE_MAX - 1);
-        gbl_pos = gbl_len = (int) strlen(gbl_buf);
         gbl_buf[gbl_len] = '\0';
 
         refresh();
@@ -1232,7 +1237,7 @@ int main(int argc, char **argv) {
 #endif
 
 #if defined(JANET_PRF)
-    uint8_t hash_key[JANET_HASH_KEY_SIZE + 1];
+    uint8_t hash_key[JANET_HASH_KEY_SIZE + 1] = {0};
 #ifdef JANET_REDUCED_OS
     char *envvar = NULL;
 #else
@@ -1240,6 +1245,7 @@ int main(int argc, char **argv) {
 #endif
     if (NULL != envvar) {
         strncpy((char *) hash_key, envvar, sizeof(hash_key) - 1);
+        hash_key[JANET_HASH_KEY_SIZE] = '\0'; /* in case copy didn't get null byte */
     } else if (janet_cryptorand(hash_key, JANET_HASH_KEY_SIZE) != 0) {
         fputs("unable to initialize janet PRF hash function.\n", stderr);
         return 1;

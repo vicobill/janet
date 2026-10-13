@@ -7,6 +7,8 @@
 ###
 ###
 
+(setdyn :optimize 1)
+
 (def defn :macro :flycheck
   ```
   (defn name & more)
@@ -46,14 +48,15 @@
 (defn defmacro :macro :flycheck
   "Define a macro."
   [name & more]
-  (setdyn name @{}) # override old macro definitions in the case of a recursive macro
   (apply defn name :macro more))
 
 (defmacro as-macro
-  ``Use a function or macro literal `f` as a macro. This lets
-  any function be used as a macro. Inside a quasiquote, the
-  idiom `(as-macro ,my-custom-macro arg1 arg2...)` can be used
-  to avoid unwanted variable capture of `my-custom-macro`.``
+  ``
+  Use a function or macro literal `f` as a macro. This allows any
+  function to be used as a macro. Inside a quasiquote, the idiom
+  `(as-macro ,my-custom-macro arg1 arg2...)` can be used to avoid
+  unwanted variable capture of `my-custom-macro`.
+  ``
   [f & args]
   (f ;args))
 
@@ -138,11 +141,11 @@
 (defn dec "Returns x - 1." [x] (- x 1))
 (defmacro ++ "Increments the var x by 1." [x] ~(set ,x (,+ ,x ,1)))
 (defmacro -- "Decrements the var x by 1." [x] ~(set ,x (,- ,x ,1)))
-(defmacro += "Increments the var x by n." [x & ns] ~(set ,x (,+ ,x ,;ns)))
-(defmacro -= "Decrements the var x by n." [x & ns] ~(set ,x (,- ,x ,;ns)))
-(defmacro *= "Shorthand for (set x (\\* x n))." [x & ns] ~(set ,x (,* ,x ,;ns)))
-(defmacro /= "Shorthand for (set x (/ x n))." [x & ns] ~(set ,x (,/ ,x ,;ns)))
-(defmacro %= "Shorthand for (set x (% x n))." [x & ns] ~(set ,x (,% ,x ,;ns)))
+(defmacro += "Shorthand for (set x (+ x ;ns))." [x & ns] ~(set ,x (,+ ,x ,;ns)))
+(defmacro -= "Shorthand for (set x (- x ;ns))." [x & ns] ~(set ,x (,- ,x ,;ns)))
+(defmacro *= "Shorthand for (set x (* x ;ns))." [x & ns] ~(set ,x (,* ,x ,;ns)))
+(defmacro /= "Shorthand for (set x (/ x ;ns))." [x & ns] ~(set ,x (,/ ,x ,;ns)))
+(defmacro %= "Shorthand for (set x (% x ;ns))." [x & ns] ~(set ,x (,% ,x ,;ns)))
 
 (defmacro assert :flycheck # should top level assert flycheck?
   "Throw an error if x is not truthy. Will not evaluate `err` if x is truthy."
@@ -178,7 +181,7 @@
   "The current lint error level. The error level is the lint level at which compilation will exit with an error and not continue.")
 
 (defdyn *lint-warn*
-  "The current lint warning level. The warning level is the lint level at which and error will be printed but compilation will continue as normal.")
+  "The current lint warning level. The warning level is the lint level at which an error will be printed but compilation will continue as normal.")
 
 (defdyn *lint-levels*
   "A table of keyword alias to numbers denoting a lint level. Can be used to provided custom aliases for numeric lint levels.")
@@ -219,9 +222,9 @@
 
 (defmacro default
   ``Define a default value for an optional argument.
-  Expands to `(def sym (if (= nil sym) val sym))`.``
+  Expands to `(def sym :shadow (if (= nil sym) val sym))`.``
   [sym val]
-  ~(def ,sym (if (,= nil ,sym) ,val ,sym)))
+  ~(def ,sym :shadow (if (,= nil ,sym) ,val ,sym)))
 
 (defmacro comment
   "Ignores the body of the comment."
@@ -243,33 +246,37 @@
   ~(if ,condition nil (do ,;body)))
 
 (defmacro cond
-  `Evaluates conditions sequentially until the first true condition
-  is found, and then executes the corresponding body. If there are an
-  odd number of forms, and no forms are matched, the last expression
-  is executed. If there are no matches, returns nil.`
-  [& pairs]
+  ``
+  Evaluates conditions sequentially until the first true condition is
+  found, and then executes the corresponding body. If there are an odd
+  number of forms, and no forms are matched, the last expression is
+  executed. If there are no matches, returns nil.
+  ``
+  [& clauses]
   (defn aux [i]
-    (def restlen (- (length pairs) i))
+    (def restlen (- (length clauses) i))
     (if (= restlen 0) nil
-      (if (= restlen 1) (in pairs i)
-        (tuple 'if (in pairs i)
-               (in pairs (+ i 1))
+      (if (= restlen 1) (in clauses i)
+        (tuple 'if (in clauses i)
+               (in clauses (+ i 1))
                (aux (+ i 2))))))
   (aux 0))
 
 (defmacro case
-  ``Select the body that equals the dispatch value. When `pairs`
-  has an odd number of elements, the last is the default expression.
-  If no match is found, returns nil.``
-  [dispatch & pairs]
+  ``
+  Select the body that equals the `dispatch` value. When `clauses` has
+  an odd number of elements, the last is the default expression. If no
+  match is found, returns nil.
+  ``
+  [dispatch & clauses]
   (def atm (idempotent? dispatch))
   (def sym (if atm dispatch (gensym)))
   (defn aux [i]
-    (def restlen (- (length pairs) i))
+    (def restlen (- (length clauses) i))
     (if (= restlen 0) nil
-      (if (= restlen 1) (in pairs i)
-        (tuple 'if (tuple = sym (in pairs i))
-               (in pairs (+ i 1))
+      (if (= restlen 1) (in clauses i)
+        (tuple 'if (tuple = sym (in clauses i))
+               (in clauses (+ i 1))
                (aux (+ i 2))))))
   (if atm
     (aux 0)
@@ -473,7 +480,7 @@
   nil without evaluating the body. Otherwise, the same as `with`.``
   [[binding ctor dtor] & body]
   ~(as-macro ,if-let [,binding ,ctor]
-     ,(defer-impl :when-with [(or dtor :close) binding] body)))
+             ,(defer-impl :when-with [(or dtor :close) binding] body)))
 
 (defmacro if-with
   ``Similar to `with`, but if binding is false or nil, evaluates
@@ -481,8 +488,8 @@
   `ctor` is bound to binding.``
   [[binding ctor dtor] truthy &opt falsey]
   ~(as-macro ,if-let [,binding ,ctor]
-     ,(defer-impl :if-with [(or dtor :close) binding] [truthy])
-     ,falsey))
+             ,(defer-impl :if-with [(or dtor :close) binding] [truthy])
+             ,falsey))
 
 (defn- for-var-template
   [i start stop step comparison delta body]
@@ -599,14 +606,37 @@
   (for-template i start stop 1 < + body))
 
 (defmacro eachk
-  "Loop over each key in `ds`. Returns nil."
-  [x ds & body]
-  (each-template x ds :keys body))
+  ``
+  Loop over each key in `x` with each key bound to `binding` with
+  destructuring support. Returns `nil`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with a suitable `next` method.
+  ``
+  [binding x & body]
+  (each-template binding x :keys body))
 
 (defmacro eachp
-  "Loop over each (key, value) pair in `ds`. Returns nil."
-  [x ds & body]
-  (each-template x ds :pairs body))
+  ``
+  Loop over each (key, value) pair in `x` with each pair bound to
+  `binding` with destructuring support. Returns `nil`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [binding x & body]
+  (each-template binding x :pairs body))
+
+(defmacro each
+  ``
+  Loop over each value in `x` with each value of `x` bound to
+  `binding` with destructuring support. Returns `nil`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [binding x & body]
+  (each-template binding x :each body))
 
 (defmacro repeat
   "Evaluate body n times. If n is negative, body will be evaluated 0 times. Evaluates to nil."
@@ -619,86 +649,91 @@
   [& body]
   ~(while true ,;body))
 
-(defmacro each
-  "Loop over each value in `ds`. Returns nil."
-  [x ds & body]
-  (each-template x ds :each body))
-
 (defn- check-empty-body
   [body]
   (if (= (length body) 0)
     (maclintf :normal "empty loop body")))
 
 (defmacro loop
-  ```
-  A general purpose loop macro. This macro is similar to the Common Lisp loop
-  macro, although intentionally much smaller in scope.  The head of the loop
-  should be a tuple that contains a sequence of either bindings or
-  conditionals. A binding is a sequence of three values that define something
-  to loop over. Bindings are written in the format:
+  ``
+  A general purpose loop macro. This macro is similar to the Common
+  Lisp `loop` macro, although intentionally much smaller in scope.
+
+  The first argument, `head`, should be a tuple that contains a
+  sequence of either bindings or conditionals. A binding is a sequence
+  of three values that define something to loop over. Bindings are
+  written in the format:
 
       binding :verb object/expression
 
-  where `binding` is a binding as passed to def, `:verb` is one of a set of
-  keywords, and `object` is any expression. Each subsequent binding creates a
-  nested loop within the loop created by the previous binding.
+  where `binding` is a binding as passed to `def`, `:verb` is one of a
+  set of keywords, and `object` is any expression. Each subsequent
+  binding creates a nested loop within the loop created by the
+  previous binding.
 
   The available verbs are:
 
-  * `:iterate` -- repeatedly evaluate and bind to the expression while it is
-    truthy.
+  * `:iterate` -- repeatedly evaluate and bind to the expression while
+    it is truthy.
 
-  * `:range` -- loop over a range. The object should be a two-element tuple with
-    a start and end value, and an optional positive step. The range is half
-    open, [start, end).
+  * `:range` -- loop over a range. The object should be a two-element
+    tuple with a start and end value, and an optional positive
+    step. The range is half open, [start, end).
 
-  * `:range-to` -- same as :range, but the range is inclusive [start, end].
+  * `:range-to` -- same as `:range`, but the range is inclusive
+    [start, end].
 
-  * `:down` -- loop over a range, stepping downwards. The object should be a
-    two-element tuple with a start and (exclusive) end value, and an optional
-    (positive!) step size.
+  * `:down` -- loop over a range, stepping downwards. The object
+    should be a two-element tuple with a start and end value, and an
+    optional positive step size.  The range is half open, [start,
+    end).
 
-  * `:down-to` -- same as :down, but the range is inclusive [start, end].
+  * `:down-to` -- same as `:down`, but the range is inclusive [start,
+    end].
 
-  * `:keys` -- iterate over the keys in a data structure.
+  * `:keys` -- iterate over the keys in a bytes, indexed, dictionary,
+    fiber, or abstract type with a suitable `next` method.
 
-  * `:pairs` -- iterate over the key-value pairs as tuples in a data structure.
+  * `:pairs` -- iterate over the key-value pairs as tuples in a bytes,
+    indexed, dictionary, fiber, or abstract type with suitable `get`
+    and `next` methods.
 
-  * `:in` -- iterate over the values in a data structure or fiber.
+  * `:in` -- iterate over the values in a bytes, indexed, dictionary,
+    fiber, or abstract type with suitable `get` and `next` methods.
 
-  `loop` also accepts conditionals to refine the looping further. Conditionals are of
-  the form:
+  `loop` also accepts conditionals to refine the looping
+  further. Conditionals are of the form:
 
       :modifier argument
 
-  where `:modifier` is one of a set of keywords, and `argument` is keyword-dependent.
-  `:modifier` can be one of:
+  where `:modifier` is one of a set of keywords, and `argument` is
+  keyword-dependent. `:modifier` can be one of:
 
-  * `:while expression` -- breaks from the current loop if `expression` is
-    falsey.
+  * `:while expression` -- breaks from the current loop if
+    `expression` is falsey.
 
-  * `:until expression` -- breaks from the current loop if `expression` is
-    truthy.
+  * `:until expression` -- breaks from the current loop if
+    `expression` is truthy.
 
-  * `:let bindings` -- defines bindings inside the current loop as passed to the
-    `let` macro.
+  * `:let bindings` -- defines bindings inside the current loop as
+    passed to the `let` macro.
 
-  * `:before form` -- evaluates a form for a side effect before the next inner
-    loop.
-
-  * `:after form` -- same as `:before`, but the side effect happens after the
+  * `:before form` -- evaluates a form for a side effect before the
     next inner loop.
+
+  * `:after form` -- same as `:before`, but the side effect happens
+    after the next inner loop.
 
   * `:repeat n` -- repeats the next inner loop `n` times.
 
-  * `:when condition` -- only evaluates the current loop body when `condition`
-    is truthy.
+  * `:when condition` -- only evaluates the current loop body when
+    `condition` is truthy.
 
-  * `:unless condition` -- only evaluates the current loop body when `condition`
-    is falsey.
+  * `:unless condition` -- only evaluates the current loop body when
+    `condition` is falsey.
 
-  The `loop` macro always evaluates to nil.
-  ```
+  The `loop` macro always evaluates to `nil`.
+  ``
   [head & body]
   (loop1 body head 0))
 
@@ -743,40 +778,62 @@
   (tuple fiber/new (tuple 'fn :fiber-fn '[] ;body) flags))
 
 (defn sum
-  "Returns the sum of xs. If xs is empty, returns 0."
-  [xs]
+  ``
+  Returns the sum of the values of `x`. If `x` is empty, returns 0.
+
+ `x` can be a bytes, indexed, dictionary, fiber, or abstract type with
+  suitable `get` and `next` methods.
+  ``
+  [x]
   (var accum 0)
-  (each x xs (+= accum x))
+  (each v x (+= accum v))
   accum)
 
 (defn mean
-  "Returns the mean of xs. If empty, returns NaN."
-  [xs]
-  (if (lengthable? xs)
-    (/ (sum xs) (length xs))
+  ``
+  Returns the mean of the values of `x`. If empty, returns `math/nan`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [x]
+  (if (lengthable? x)
+    (/ (sum x) (length x))
     (do
       (var [accum total] [0 0])
-      (each x xs (+= accum x) (++ total))
+      (each v x (+= accum v) (++ total))
       (/ accum total))))
 
 (defn geomean
-  "Returns the geometric mean of xs. If empty, returns NaN."
-  [xs]
-  (if (lengthable? xs)
+  ``
+  Returns the geometric mean of the values of `x`. If empty, returns
+  `math/nan`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [x]
+  (if (lengthable? x)
     (do
       (var accum 0)
-      (each x xs (+= accum (math/log x)))
-      (math/exp (/ accum (length xs))))
+      (each v x (+= accum (math/log v)))
+      (math/exp (/ accum (length x))))
     (do
       (var [accum total] [0 0])
-      (each x xs (+= accum (math/log x)) (++ total))
+      (each v x (+= accum (math/log v)) (++ total))
       (math/exp (/ accum total)))))
 
 (defn product
-  "Returns the product of xs. If xs is empty, returns 1."
-  [xs]
+  ``
+  Returns the product of the values of `x`. If `x` is empty, returns
+  1.
+
+ `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [x]
   (var accum 1)
-  (each x xs (*= accum x))
+  (each v x (*= accum v))
   accum)
 
 (defmacro when-let
@@ -842,14 +899,32 @@
   [args] (do-extreme < args))
 
 (defn first
-  "Get the first element from an indexed data structure."
-  [xs]
-  (get xs 0))
+  ``
+  Get the first value in `x`.
+
+  If `x` is a non-empty bytes or indexed type value, return the first
+  element.
+
+  If `x` is a fiber, return the fiber's last value or `nil` if there
+  isn't one yet.
+
+  If `x` is an abstract type value with a `get` method, call the method
+  with a key of `0`.
+
+  In all other cases, return `nil`.
+  ``
+  [x]
+  (get x 0))
 
 (defn last
-  "Get the last element from an indexed data structure."
-  [xs]
-  (get xs (- (length xs) 1)))
+  ``
+  Get the final element from `x`.
+
+  `x` can be a bytes, indexed, or abstract type value with suitable
+  `get` and `length` methods.
+  ``
+  [x]
+  (get x (- (length x) 1)))
 
 ## Polymorphic comparisons
 
@@ -968,84 +1043,121 @@
   a)
 
 (defn sort
-  ``Sorts `ind` in-place, and returns it. Uses quick-sort and is not a stable sort.
-  If a `before?` comparator function is provided, sorts elements using that,
-  otherwise uses `<`.``
-  [ind &opt before?]
+  ``
+  Sorts `x` in-place, and returns it. Uses quick-sort and is not a
+  stable sort. If a `before?` comparator function is provided, sorts
+  elements using that, otherwise uses `<`.
+
+  `x` can be a buffer, array, or abstract type with suitable `get`,
+  `put`, and `length` methods.
+  ``
+  [x &opt before?]
   (default before? <)
-  (sort-help ind 0 (- (length ind) 1) before?))
+  (sort-help x 0 (- (length x) 1) before?))
 
 (defn sort-by
-  ``Sorts `ind` in-place by calling a function `f` on each element and
-  comparing the result with `<`.``
-  [f ind]
-  (sort ind (fn :sort-by-comp [x y] (< (f x) (f y)))))
+  ``
+  Sorts `x` in-place by calling a function `f` on each element and
+  comparing the results with `<`.
+
+  `x` can be a buffer, array, or abstract type with suitable `get`,
+  `put`, and `length` methods.
+  ``
+  [f x]
+  (sort x (fn :sort-by-comp [i j] (< (f i) (f j)))))
 
 (defn sorted
-  ``Returns a new sorted array without modifying the old one.
-  If a `before?` comparator function is provided, sorts elements using that,
-  otherwise uses `<`.``
+  ``
+  Returns a new sorted array based on an indexed type `ind`. If a
+  `before?` comparator function is provided, sorts elements using
+  that, otherwise uses `<`.
+  ``
   [ind &opt before?]
   (sort (array/slice ind) before?))
 
 (defn sorted-by
-  ``Returns a new sorted array that compares elements by invoking
-  a function `f` on each element and comparing the result with `<`.``
+  ``
+  Returns a new sorted array based on an indexed type `ind`.
+  Comparison is done by invoking a function `f` on each element and
+  comparing the results with `<`.
+  ``
   [f ind]
   (sorted ind (fn :sorted-by-comp [x y] (< (f x) (f y)))))
 
 (defn reduce
-  ``Reduce, also know as fold-left in many languages, transforms
-  an indexed type (array, tuple) with a function to produce a value by applying `f` to
-  each element in order. `f` is a function of 2 arguments, `(f accum el)`, where
-  `accum` is the initial value and `el` is the next value in the indexed type `ind`.
-  `f` returns a value that will be used as `accum` in the next call to `f`. `reduce`
-  returns the value of the final call to `f`.``
-  [f init ind]
-  (var accum init)
-  (each el ind (set accum (f accum el)))
-  accum)
+  ``
+  Also know as fold-left in many languages, this function transforms
+  `x` by successively applying a function `f` to values from `x` and
+  an updating "accumulator" value. `f` is a function of 2 arguments,
+  `(f acc v)`, where `acc` starts as `init` and `v` is the next value
+  in `x`. `f` returns a value that will be used as `acc` in the next
+  call to `f`. The ultimate return value is that of the final call to
+  `f`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [f init x]
+  (var acc init)
+  (each v x (set acc (f acc v)))
+  acc)
 
 (defn reduce2
-  ``The 2-argument version of `reduce` that does not take an initialization value.
-  Instead, the first element of the array is used for initialization. If `ind` is empty, will evaluate to nil.``
-  [f ind]
-  (var k (next ind))
+  ``
+  The 2-argument version of `reduce`. Instead of taking an explicit
+  initial value, the first value of `x` is used instead. If `x` is
+  empty, returns `nil`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [f x]
+  (var k (next x))
   (if (= nil k) (break nil))
-  (var res (in ind k))
-  (set k (next ind k))
+  (var res (in x k))
+  (set k (next x k))
   (while (not= nil k)
-    (set res (f res (in ind k)))
-    (set k (next ind k)))
+    (set res (f res (in x k)))
+    (set k (next x k)))
   res)
 
 (defn accumulate
-  ``Similar to `reduce`, but accumulates intermediate values into an array.
-  The last element in the array is what would be the return value from `reduce`.
-  The `init` value is not added to the array (the return value will have the same
-  number of elements as `ind`).
-  Returns a new array.``
-  [f init ind]
+  ``
+  Similar to `reduce`, but accumulates successive results of applying
+  `f` into a new array. The last element in the array is what would be
+  the return value from `reduce`. The `init` value is not added
+  directly as the first value of the new array, i.e. the returned
+  array will have the same number of elements as `x`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [f init x]
   (var res init)
   (def ret @[])
-  (each x ind (array/push ret (set res (f res x))))
+  (each v x (array/push ret (set res (f res v))))
   ret)
 
 (defn accumulate2
-  ``The 2-argument version of `accumulate` that does not take an initialization value.
-  The first value in `ind` will be added to the array as is, so the length of the
-  return value will be `(length ind)`.``
-  [f ind]
-  (var k (next ind))
+  ``
+  The 2-argument version of `accumulate`. Instead of taking an
+  explicit initial value, the first value of `x` is used instead. If
+  `x` is empty, returns an empty array.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [f x]
+  (var k (next x))
   (def ret @[])
   (if (= nil k) (break ret))
-  (var res (in ind k))
+  (var res (in x k))
   (array/push ret res)
-  (set k (next ind k))
+  (set k (next x k))
   (while (not= nil k)
-    (set res (f res (in ind k)))
+    (set res (f res (in x k)))
     (array/push ret res)
-    (set k (next ind k)))
+    (set k (next x k)))
   ret)
 
 (defmacro- map-aggregator
@@ -1096,113 +1208,147 @@
            (map-aggregator ,maptype ,res (,f x ;call-buffer)))))))
 
 (defn map
-  ```
-  Map a function `f` over every value in a data structure `ind`
-  and return an array of results, but only if no `inds` are
-  provided. Multiple data structures can be handled if each
-  `inds` is a data structure and `f` is a function of arity
-  one more than the number of `inds`.  The resulting array has
-  a length that is the shortest of `ind` and each of `inds`.
-  ```
-  [f ind & inds]
+  ``
+  Map a function `f` over every value in `x` and return an array of
+  results.
+
+  Also functions variadically, i.e. takes additional arguments, with
+  suitable changes to the arity of `f`. `f` is called with both values
+  from `x` and additional arguments, and only as many times as the
+  length of the shortest of `x` and each element of `xs`. If `x` or
+  any element of `xs` is empty, returns an empty array.
+
+  `x` and elements of `xs` can be values of type bytes, indexed,
+  dictionary, fiber, or abstract with suitable `get` and `next`
+  methods.
+  ``
+  [f x & xs]
   (def res @[])
-  (map-template :map res f ind inds)
+  (map-template :map res f x xs)
   res)
 
 (defn mapcat
-  ```
-  Map a function `f` over every value in a data structure `ind`
-  and use `array/concat` to concatenate the results, but only if
-  no `inds` are provided. Multiple data structures can be handled
-  if each `inds` is a data structure and `f` is a function of
-  arity one more than the number of `inds`. Note that `f` is only
-  applied to values at indeces up to the largest index of the
-  shortest of `ind` and each of `inds`.
-  ```
-  [f ind & inds]
+  ``
+  Map a function `f` over every value in `x` and use `array/concat` to
+  concatenate the results.
+
+  Also functions variadically, i.e. takes additional arguments, with
+  suitable changes to the arity of `f`. `f` is called with both values
+  from `x` and additional arguments, and only as many times as the
+  length of the shortest of `x` and each element of `xs`. If `x` or
+  any element of `xs` is empty, returns an empty array.
+
+  `x` and elements of `xs` can be values of type bytes, indexed,
+  dictionary, fiber, or abstract with suitable `get` and `next`
+  methods.
+  ``
+  [f x & xs]
   (def res @[])
-  (map-template :mapcat res f ind inds)
+  (map-template :mapcat res f x xs)
   res)
 
 (defn filter
-  ``Given a predicate, take only elements from an array or tuple for
-  which `(pred element)` is truthy. Returns a new array.``
-  [pred ind]
+  ``
+  Given a predicate, take only elements from `x` for which `(pred
+  element)` is truthy. Returns a new array.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [pred x]
   (def res @[])
-  (each item ind
-    (if (pred item)
-      (array/push res item)))
+  (each v x
+    (if (pred v) (array/push res v)))
   res)
 
 (defn count
-  ```
-  Count the number of values in a data structure `ind` for which
-  applying `pred` yields a truthy value, but only if no `inds` are
-  provided. Multiple data structures can be handled if each `inds`
-  is a data structure and `pred` is a function of arity one more
-  than the number of `inds`. Note that `pred` is only applied to
-  values at indeces up to the largest index of the shortest of
-  `ind` and each of `inds`.
-  ```
-  [pred ind & inds]
+  ``
+  Count the number of values in `x` for which applying `pred` yields a
+  truthy value.
+
+  Also functions variadically, i.e. takes additional arguments, with
+  suitable changes to the arity of `pred`. `pred` is called with both
+  values from `x` and additional arguments, and only as many times as
+  the length of the shortest of `x` and each element of `xs`. If `x`
+  or any element of `xs` is empty, returns 0.
+
+  `x` and elements of `xs` can be values of type bytes, indexed,
+  dictionary, fiber, or abstract with suitable `get` and `next`
+  methods.
+  ``
+  [pred x & xs]
   (var res 0)
-  (map-template :count res pred ind inds)
+  (map-template :count res pred x xs)
   res)
 
 (defn keep
-  ```
-  Given a predicate `pred`, return a new array containing the
-  truthy results of applying `pred` to each value in the data
-  structure `ind`, but only if no `inds` are provided. Multiple
-  data structures can be handled if each `inds` is a data
-  structure and `pred` is a function of arity one more than the
-  number of `inds`. The resulting array has a length that is no
-  longer than the shortest of `ind` and each of `inds`.
-  ```
-  [pred ind & inds]
+  ``
+  Given a predicate `pred`, return a new array containing the truthy
+  results of applying `pred` to each value in `x`.
+
+  Also functions variadically, i.e. takes additional arguments, with
+  suitable changes to the arity of `pred`. `pred` is called with both
+  values from `x` and additional arguments, and only as many times as
+  the length of the shortest of `x` and each element of `xs`. If `x`
+  or any element of `xs` is empty, returns an empty array.
+
+  `x` and elements of `xs` can be values of type bytes, indexed,
+  dictionary, fiber, or abstract with suitable `get` and `next`
+  methods.
+  ``
+  [pred x & xs]
   (def res @[])
-  (map-template :keep res pred ind inds)
+  (map-template :keep res pred x xs)
   res)
 
 (defn find-index
-  ``Find the index of indexed type for which `pred` is true. Returns `dflt` if not found.``
-  [pred ind &opt dflt]
-  (var k nil)
+  ``
+  Find the index of `x` for which `pred` is true. If not found, return
+  `dflt` if provided, or `nil` otherwise.
+
+  `x` can be a bytes, indexed, dictionary, or abstract type with
+  suitable `get` and `next` methods.
+  ``
+  [pred x &opt dflt]
+  (var k (next x nil))
   (var ret dflt)
-  (while true
-    (set k (next ind k))
-    (if (= k nil) (break))
-    (def item (in ind k))
-    (when (pred item)
-      (set ret k)
-      (break)))
+  (while (not= nil k)
+    (when (pred (in x k)) (set ret k) (break))
+    (set k (next x k)))
   ret)
 
 (defn find
-  ``Find the first value in an indexed collection that satisfies a predicate. Returns
-  `dflt` if not found.``
-  [pred ind &opt dflt]
-  (var k nil)
+  ``
+  Find the first value in `x` that satisfies `pred`. If not found,
+  return `dflt` if given, or `nil` otherwise.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [pred x &opt dflt]
+  (var k (next x nil))
   (var ret dflt)
-  (while true
-    (set k (next ind k))
-    (if (= k nil) (break))
-    (def item (in ind k))
-    (when (pred item)
-      (set ret item)
-      (break)))
+  (while (not= nil k)
+    (def item (in x k))
+    (when (pred item) (set ret item) (break))
+    (set k (next x k)))
   ret)
 
 (defn index-of
-  ``Find the first key associated with a value x in a data structure, acting like a reverse lookup.
-  Will not look at table prototypes.
-  Returns `dflt` if not found.``
-  [x ind &opt dflt]
-  (var k (next ind nil))
+  ``
+  Find the first key associated with a value `val` in `x`, acting like
+  a reverse lookup. Will not look at dictionary prototypes. If not
+  found, return `dflt` if given, or `nil` otherwise.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [val x &opt dflt]
+  (var k (next x nil))
   (var ret dflt)
   (while (not= nil k)
-    (when (= (in ind k) x) (set ret k) (break))
-    (set k (next ind k)))
+    (when (= (in x k) val) (set ret k) (break))
+    (set k (next x k)))
   ret)
 
 (defn- take-n-slice
@@ -1332,14 +1478,24 @@
   (tuple 'fn :juxt (tuple '& $args) (tuple/slice parts 0)))
 
 (defn has-key?
-  "Check if a data structure `ds` contains the key `key`."
-  [ds key]
-  (not= nil (get ds key)))
+  ``
+  Check if `x` maps `key` to a non-nil value.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with a suitable `get` method.
+  ``
+  [x key]
+  (not= nil (get x key)))
 
 (defn has-value?
-  "Check if a data structure `ds` contains the value `value`. Will run in time proportional to the size of `ds`."
-  [ds value]
-  (not= nil (index-of value ds)))
+  ``
+  Checks if `x` contains `value`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type with
+  suitable `get` and `next` methods.
+  ``
+  [x value]
+  (not= nil (index-of value x)))
 
 (defdyn *defdyn-prefix* ``Optional namespace prefix to add to keywords declared with `defdyn`.
   Use this to prevent keyword collisions between dynamic bindings.``)
@@ -1350,6 +1506,7 @@
 (defdyn *exit* "When set, will cause the current context to complete. Can be set to exit from repl (or file), for example.")
 (defdyn *exit-value* "Set the return value from `run-context` upon an exit.")
 (defdyn *task-id* "When spawning a thread or fiber, the task-id can be assigned for concurrency control.")
+(defdyn *optimize* "Set optimization level for the the `compile` function. Default is 0, and higher integer levels will enable more optimization.")
 
 (defdyn *current-file*
   "Bound to the name of the currently compiling file.")
@@ -1558,65 +1715,96 @@
     (fn :partial [& r] (f ;more ;r))))
 
 (defn every?
-  ``Evaluates to the last element of `ind` if all preceding elements are truthy,
-  otherwise evaluates to the first falsey element.``
-  [ind]
+  ``
+  Evaluates to the last element of `x` if all preceding elements are
+  truthy, true if `x` is empty, or otherwise to the first falsey
+  element.
+
+  `x` can be a bytes, indexed. dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [x]
   (var res true)
-  (loop [x :in ind :while res]
-    (set res x))
+  (loop [v :in x :while res]
+    (set res v))
   res)
 
 (defn any?
-  ``Evaluates to the last element of `ind` if all preceding elements are falsey,
-  otherwise evaluates to the first truthy element.``
-  [ind]
+  ``
+  Evaluates to the last element of `x` if all preceding elements are
+  falsey, `nil` if `x` is empty, or otherwise to the first truthy
+  element.
+
+  `x` can be a bytes, indexed. dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [x]
   (var res nil)
-  (loop [x :in ind :until res]
-    (set res x))
+  (loop [v :in x :until res]
+    (set res v))
   res)
 
 (defn reverse!
-  `Reverses the order of the elements in a given array or buffer and returns it
-  mutated.`
-  [t]
+  ``
+  Reverses the order of the values in `x` and returns it mutated.
+
+  `x` can be a buffer, array, or abstract type with suitable
+  `get`, `length`, and `put` methods.
+  ``
+  [x]
   (var i 0)
-  (var j (length t))
+  (var j (length x))
   (while (< i (-- j))
-    (def ti (in t i))
-    (put t i (in t j))
-    (put t j ti)
+    (def v (in x i))
+    (put x i (in x j))
+    (put x j v)
     (++ i))
-  t)
+  x)
 
 (defn reverse
-  `Reverses the order of the elements in a given array or tuple and returns
-  a new array. If a string or buffer is provided, returns a buffer instead.`
-  [t]
-  (if (lengthable? t)
+  ``
+  Reverses the order of the values in `x`. If `x` is a bytes type,
+  returns a buffer, otherwise returns an array.
+
+  `x` can be a bytes, indexed, fiber, or abstract type with suitable
+  `get` and `next` methods.
+  ``
+  [x]
+  (if (lengthable? x)
     (do
-      (var n (length t))
-      (def ret (if (bytes? t)
+      (var n (length x))
+      (def ret (if (bytes? x)
                  (buffer/new-filled n)
                  (array/new-filled n)))
-      (each v t
+      (each v x
         (put ret (-- n) v))
       ret)
-    (reverse! (seq [v :in t] v))))
+    (reverse! (seq [v :in x] v))))
 
 (defn invert
-  ``Given an associative data structure `ds`, returns a new table where the
-  keys of `ds` are the values, and the values are the keys. If multiple keys
-  in `ds` are mapped to the same value, only one of those values will
-  become a key in the returned table.``
-  [ds]
+  ``
+  Returns a table where the keys of `x` are the values, and the values
+  are the keys. If multiple keys in `x` are mapped to the same value,
+  only one of those values will become a key in the returned table.
+
+  `x` can be a bytes, indexed, dictionary, or abstract type with a
+  suitable `next` method.
+  ``
+  [x]
   (def ret @{})
-  (loop [k :keys ds]
-    (put ret (in ds k) k))
+  (loop [k :keys x]
+    (put ret (in x k) k))
   ret)
 
 (defn zipcoll
-  `Creates a table from two arrays/tuples.
-  Returns a new table.`
+  ``
+  Creates a table from `ks` and `vs` by pairing values at the same
+  index from each. If `ks` or `vs` has more values than the other, the
+  extra values are ignored. Returns a new table.
+
+  `ks` and `vs` can by bytes, indexed, fibers, or abstract types with
+  suitable `get` and `next` methods.
+  ``
   [ks vs]
   (def res @{})
   (var kk nil)
@@ -1630,20 +1818,37 @@
   res)
 
 (defn get-in
-  ``Access a value in a nested data structure. Looks into the data structure via
-  a sequence of keys. If value is not found, and `dflt` is provided, returns `dflt`.``
-  [ds ks &opt dflt]
-  (var d ds)
+  ``
+  Use the keys `ks` to look up a nested value in `x`. If a value is
+  not found, will return `dflt` if provided, or `nil` otherwise.
+
+  `x` can be a suitable indexed, dictionary, or abstract type with a
+  `get` method.
+
+  `ks` can be an indexed or abstract type with `get` and `next`
+  methods.
+  ``
+  [x ks &opt dflt]
+  (var d x)
   (loop [k :in ks :while (not (nil? d))] (set d (get d k)))
   (if (= nil d) dflt d))
 
 (defn update-in
-  ``Update a value in a nested data structure `ds`. Looks into `ds` via a sequence of keys,
-  and replaces the value found there with `f` applied to that value.
-  Missing data structures will be replaced with tables. Returns
-  the modified, original data structure.``
-  [ds ks f & args]
-  (var d ds)
+  ``
+  Update a value in `x`. Looks into a nested spot in `x` identified by
+  the keys `ks` and replaces the value found there with `f` applied to
+  that value and any values passed and available in `args`. Missing
+  spots will be replaced with tables and `f` is passed `nil` instead
+  of a found value. Returns `x` modified.
+
+  `x` can be a suitable array, table or abstract type with `get` and
+  `put` methods.
+
+  `ks` can be an indexed or abstract type with suitable `get` and
+  `length` methods.
+  ``
+  [x ks f & args]
+  (var d x)
   (def len-1 (- (length ks) 1))
   (if (< len-1 0) (error "expected at least 1 key in ks"))
   (forv i 0 len-1
@@ -1657,14 +1862,22 @@
   (def last-key (get ks len-1))
   (def last-val (get d last-key))
   (put d last-key (f last-val ;args))
-  ds)
+  x)
 
 (defn put-in
-  ``Put a value into a nested data structure `ds`. Looks into `ds` via
-  a sequence of keys. Missing data structures will be replaced with tables. Returns
-  the modified, original data structure.``
-  [ds ks v]
-  (var d ds)
+  ``
+  Use the keys `ks` to put a value `val` into a nested spot in
+  `x`. Missing spots will be replaced with tables. Returns `x`
+  modified.
+
+  `x` can be a suitable array, table or abstract type with `get` and
+  `put` methods.
+
+  `ks` can be an indexed or abstract type with suitable `get` and
+  `length` methods.
+  ``
+  [x ks val]
+  (var d x)
   (def len-1 (- (length ks) 1))
   (if (< len-1 0) (error "expected at least 1 key in ks"))
   (forv i 0 len-1
@@ -1677,39 +1890,54 @@
       (set d v)))
   (def last-key (get ks len-1))
   (def last-val (get d last-key))
-  (put d last-key v)
-  ds)
+  (put d last-key val)
+  x)
 
 (defn update
-  ``For a given key in data structure `ds`, replace its corresponding value with the
-  result of calling `func` on that value. If `args` are provided, they will be passed
-  along to `func` as well. Returns `ds`, updated.``
-  [ds key func & args]
-  (def old (get ds key))
-  (put ds key (func old ;args)))
+  ``
+  For a given key in `x`, replace its associated value with the result
+  of applying `f` to that value. If `args` are provided, they will be
+  passed along to `f` as well. Returns updated `x`.
+
+  `x` can be a buffer, array, table, or suitable abstract type with
+  `get` and `put` methods.
+  ``
+  [x key f & args]
+  (def old (get x key))
+  (put x key (f old ;args)))
 
 (defn merge-into
-  ``Merges multiple tables/structs into table `tab`. If a key appears in more than one
-  collection in `colls`, then later values replace any previous ones. Returns `tab`.``
-  [tab & colls]
-  (loop [c :in colls
-         key :keys c]
-    (put tab key (in c key)))
+  ``
+  Merges multiple dictionaries into table `tab`. If a key appears in
+  more than one dictionary in `dicts`, then later values replace any
+  previous ones. Returns `tab`.
+  ``
+  [tab & dicts]
+  (loop [d :in dicts
+         key :keys d]
+    (put tab key (in d key)))
   tab)
 
 (defn merge
-  ``Merges multiple tables/structs into one new table. If a key appears in more than one
-  collection in `colls`, then later values replace any previous ones.
-  Returns the new table.``
-  [& colls]
+  ``
+  Merges multiple dictionaries into one new table. If a key appears in
+  more than one dictionary in `dicts` then later values replace any
+  previous ones. Returns the new table.
+  ``
+  [& dicts]
   (def container @{})
-  (loop [c :in colls
-         key :keys c]
-    (put container key (in c key)))
+  (loop [d :in dicts
+         key :keys d]
+    (put container key (in d key)))
   container)
 
 (defn keys
-  "Get the keys of an associative data structure."
+  ``
+  Get the keys of `x` as an array.
+
+  `x` can be a bytes, indexed, dictionary, or abstract type with a
+  suitable `next` method.
+  ``
   [x]
   (if (lengthable? x)
     (do
@@ -1722,7 +1950,12 @@
     (seq [k :keys x] k)))
 
 (defn values
-  "Get the values of an associative data structure."
+  ``
+  Get the values of `x` as an array.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
   [x]
   (if (lengthable? x)
     (do
@@ -1735,7 +1968,13 @@
     (seq [v :in x] v)))
 
 (defn pairs
-  "Get the key-value pairs of an associative data structure."
+  ``
+  Return an array of tuples of the key-value pairs of `x`. For bytes
+  and indexed types, the integer indices are considered the keys.
+
+  `x` can be a bytes, indexed, dictionary, or abstract type with
+  suitable `get` and `in` methods.
+  ``
   [x]
   (if (lengthable? x)
     (do
@@ -1748,49 +1987,72 @@
     (seq [p :pairs x] p)))
 
 (defn frequencies
-  "Get the number of occurrences of each value in an indexed data structure."
-  [ind]
+  ``
+  Returns a table of occurrences of each value in `x`.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with `get` and `next` methods.
+  ``
+  [x]
   (def freqs @{})
-  (each x ind
-    (def n (in freqs x))
-    (set (freqs x) (if n (+ 1 n) 1)))
+  (each v x
+    (put freqs v (inc (in freqs v 0))))
   freqs)
 
 (defn group-by
-  ``Group elements of `ind` by a function `f` and put the results into a new table. The keys of
-  the table are the distinct return values from calling `f` on the elements of `ind`. The values
-  of the table are arrays of all elements of `ind` for which `f` called on the element equals
-  that corresponding key.``
-  [f ind]
+  ``
+  Group values of `x` by a function `f` and put the results into a new
+  table. The keys of the table are the distinct return values from
+  calling `f` on the values of `x`. The values of the table are arrays
+  of all values of `x` for which `f` called on the value equals that
+  corresponding key.
+
+  `x` can be a bytes, indexed, dictionary, fiber, or abstract type
+  with suitable `get` and `next` methods.
+  ``
+  [f x]
   (def ret @{})
-  (each x ind
-    (def y (f x))
+  (each v x
+    (def y (f v))
     (if-let [arr (get ret y)]
-      (array/push arr x)
-      (put ret y @[x])))
+      (array/push arr v)
+      (put ret y @[v])))
   ret)
 
 (defn partition-by
-  ``Partition elements of a sequential data structure by a representative function `f`. Partitions
-  split when `(f x)` changes values when iterating to the next element `x` of `ind`. Returns a new array
-  of arrays.``
-  [f ind]
+  ``
+  Partition values of `x` by a function `f`. Partitions split when `f`
+  applied to a value changes result when iterating to the next value
+  of `x`. Returns a new array of arrays.
+
+  `x` can be a bytes, indexed, fiber, or abstract type with suitable
+  `get` and `next` methods.
+  ``
+  [f x]
   (def ret @[])
   (var span nil)
-  (var category nil)
-  (var is-new true)
-  (each x ind
-    (def y (f x))
+  (var categ nil)
+  (var new? true)
+  (each v x
+    (def y (f v))
     (cond
-      is-new (do (set is-new false) (set category y) (set span @[x]) (array/push ret span))
-      (= y category) (array/push span x)
-      (do (set category y) (set span @[x]) (array/push ret span))))
+      new? (do (set new? false) (set categ y) (set span @[v]) (array/push ret span))
+      (= categ y) (array/push span v)
+      (do (set categ y) (set span @[v]) (array/push ret span))))
   ret)
 
 (defn interleave
-  "Returns an array of the first elements of each col, then the second elements, etc."
-  [& cols]
-  (mapcat tuple ;cols))
+  ``
+  Returns an array of the values of each element of `xs`, interleaved.
+  If the elements of `xs` do not all have the same number of values,
+  the shortest element of `xs` determines the number of values from
+  each element of `xs` that are contained in the returned array.
+
+  Each element of `xs` can be a bytes, indexed, fiber, or abstract
+  type with suitable `get` and `next` methods.
+  ``
+  [& xs]
+  (mapcat tuple ;xs))
 
 (defn distinct
   "Returns an array of the deduplicated values in `xs`."
@@ -1801,20 +2063,24 @@
   ret)
 
 (defn flatten-into
-  ``Takes a nested array (tree) `xs` and appends the depth first traversal of
-  `xs` to array `into`. Returns `into`.``
-  [into xs]
-  (each x xs
-    (if (indexed? x)
-      (flatten-into into x)
-      (array/push into x)))
+  ``
+  Appends the depth-first traversal of an indexed type `ind` into a
+  given array `into`. Returns `into`.
+  ``
+  [into ind]
+  (each elt ind
+    (if (indexed? elt)
+      (flatten-into into elt)
+      (array/push into elt)))
   into)
 
 (defn flatten
-  ``Takes a nested array (tree) `xs` and returns the depth first traversal of
-  it. Returns a new array.``
-  [xs]
-  (flatten-into @[] xs))
+  ``
+  Returns a depth-first traversal of an indexed type `ind` as a new
+  array.
+  ``
+  [ind]
+  (flatten-into @[] ind))
 
 (defn kvs
   ``Takes a table or struct and returns a new array of key value pairs
@@ -1834,24 +2100,28 @@
   ret)
 
 (defn interpose
-  ``Returns a sequence of the elements of `ind` separated by
-  `sep`. Returns a new array.``
-  [sep ind]
-  (var k (next ind nil))
+  ``
+  Returns an array of the values of `x` separated by `val`.
+
+  `x` can be a bytes, indexed, fiber or abstract type with suitable
+  `get` and `next` methods.
+  ``
+  [val x]
+  (var k (next x nil))
   (if (not= nil k)
-    (if (lengthable? ind)
+    (if (lengthable? x)
       (do
-        (def ret (array/new-filled (- (* 2 (length ind)) 1) sep))
+        (def ret (array/new-filled (- (* 2 (length x)) 1) val))
         (var i 0)
         (while (not= nil k)
-          (put ret i (in ind k))
-          (set k (next ind k))
+          (put ret i (in x k))
+          (set k (next x k))
           (+= i 2))
         ret)
       (do
-        (def ret @[(in ind k)])
-        (while (not= nil (set k (next ind k)))
-          (array/push ret sep (in ind k)))
+        (def ret @[(in x k)])
+        (while (not= nil (set k (next x k)))
+          (array/push ret val (in x k)))
         ret))
     @[]))
 
@@ -1870,13 +2140,20 @@
   ret)
 
 (defn partition
-  ``Partition an indexed data structure `ind` into tuples
-  of size `n`. Returns a new array.``
-  [n ind]
+  ``
+  Partition the values of `x` into tuples of size `n`. Returns a new
+  array.
+
+  `n` should be a non-negative integer.
+
+  `x` can be a bytes, indexed, fiber, or abstract type with suitable
+  `get` and `next` methods.
+  ``
+  [n x]
   (cond
-    (indexed? ind) (partition-slice tuple/slice n ind)
-    (bytes? ind) (partition-slice string/slice n ind)
-    (partition-slice tuple/slice n (values ind))))
+    (indexed? x) (partition-slice tuple/slice n x)
+    (bytes? x) (partition-slice string/slice n x)
+    (partition-slice tuple/slice n (values x))))
 
 ###
 ###
@@ -1894,12 +2171,12 @@
   contents)
 
 (defn spit
-  ``Write `contents` to a file at `path`. Can optionally append to the file.``
-  [path contents &opt mode]
+  ``Write `bytes` to a file at `path`. Can optionally append to the file.``
+  [path bytes &opt mode]
   (default mode :wb)
   (def f (file/open path mode))
   (if-not f (error (string "could not open file " path " with mode " mode)))
-  (file/write f contents)
+  (file/write f bytes)
   (file/close f)
   nil)
 
@@ -2254,35 +2531,44 @@
   ret)
 
 (defn all
-  ```
-  Returns true if applying `pred` to every value in a data
-  structure `ind` results in only truthy values, but only if no
-  `inds` are provided. Multiple data structures can be handled
-  if each `inds` is a data structure and `pred` is a function
-  of arity one more than the number of `inds`. Returns the first
-  falsey result encountered. Note that `pred` is only called as
-  many times as the length of the shortest of `ind` and each of
-  `inds`. If `ind` or any of `inds` are empty, returns true.
-  ```
-  [pred ind & inds]
+  ``
+  Apply `pred` to values of `x`. Return true if all results are truthy;
+  if any result is falsey, stop applying `pred` and return the result.
+
+  Also functions variadically, i.e. takes additional arguments, with
+  suitable changes to the arity of `pred`. `pred` is called with both
+  values from `x` and additional arguments, and only as many times as
+  the length of the shortest of `x` and each element of `xs`. If `x`
+  or any element of `xs` is empty, returns true.
+
+  `x` and elements of `xs` can be values of type bytes, indexed,
+  dictionary, fiber, or abstract with suitable `get` and `next`
+  methods.
+  ``
+  [pred x & xs]
   (var res true)
-  (map-template :all res pred ind inds)
+  (map-template :all res pred x xs)
   res)
 
 (defn some
-  ```
-  Returns nil if applying `pred` to every value in a data
-  structure `ind` results in only falsey values, but only if no
-  `inds` are provided. Multiple data structures can be handled
-  if each `inds` is a data structure and `pred` is a function
-  of arity one more than the number of `inds`. Returns the first
-  truthy result encountered. Note that `pred` is only called as
-  many times as the length of the shortest of `ind` and each of
-  `inds`. If `ind` or any of `inds` are empty, returns nil.
-  ```
-  [pred ind & inds]
+  ``
+  Returns `nil` if applying `pred` to every value in `x` results in
+  only falsey values, otherwise returns the first truthy result
+  encountered.
+
+  Also functions variadically, i.e. takes additional arguments, with
+  suitable changes to the arity of `f`. `f` is called with both values
+  from `x` and additional arguments, and only as many times as the
+  length of the shortest of `x` and each element of `xs`. If `x` or
+  any element of `xs` is empty, returns `nil`.
+
+  `x` and elements of `xs` can be values of type bytes, indexed,
+  dictionary, fiber, or abstract with suitable `get` and `next`
+  methods.
+  ``
+  [pred x & xs]
   (var res nil)
-  (map-template :some res pred ind inds)
+  (map-template :some res pred x xs)
   res)
 
 (defn freeze
@@ -2412,12 +2698,12 @@
       (error (string "invalid metadata " m))))
   (with-syms [entry old-entry f]
     ~(as-macro ,let [,old-entry (,dyn ',name)]
-       (def ,entry (as-macro ,or ,old-entry @{:ref @[nil]}))
-       (,setdyn ',name ,entry)
-       (def ,f ,fbody)
-       (,put-in ,entry [:ref 0] ,f)
-       (,merge-into ,entry ',metadata)
-       ,f)))
+               (def ,entry (as-macro ,or ,old-entry @{:ref @[nil]}))
+               (,setdyn ',name ,entry)
+               (def ,f ,fbody)
+               (,put-in ,entry [:ref 0] ,f)
+               (,merge-into ,entry ',metadata)
+               ,f)))
 
 ###
 ###
@@ -2425,6 +2711,7 @@
 ###
 ###
 
+(def- max-shortfn-params 9999) # Less than 0xFFFF so we have enough registers for internal use
 (defmacro short-fn
   ```
   Shorthand for `fn`. Arguments are given as `$n`, where `n` is the
@@ -2455,8 +2742,10 @@
         :else
         (do
           (def num (scan-number (string/slice x 1)))
-          (if (nat? num)
+          (if num
             (do
+              (assertf (nat? num) "expected indexed parameter, got %s" x)
+              (assertf (<= num max-shortfn-params) "too many short-fn parameters (%s)" x)
               (saw-special-arg num)
               (symbol prefix x))
             x)))
@@ -2603,41 +2892,48 @@
    :all math/inf})
 
 (defn run-context
-  ```
-  Run a context. This evaluates expressions in an environment,
-  and encapsulates the parsing, compilation, and evaluation.
-  Returns `(in environment :exit-value environment)` when complete.
-  `opts` is a table or struct of options. The options are as follows:
+  ``
+  Run a context. This evaluates expressions in an environment, and
+  encapsulates parsing, compilation, and evaluation. Takes a
+  dictionary `opts` with the following options:
 
-    * `:chunks` -- callback to read into a buffer - default is getline
+  * `:env` -- environment to compile against; default is the current
+    environment.
 
-    * `:on-parse-error` -- callback when parsing fails - default is bad-parse
+  * `:chunks` -- callback to read into a buffer; default is `getline`.
 
-    * `:env` -- the environment to compile against - default is the current env
+  * `:on-status` -- callback when a value is evaluated; default is
+    `debug/stacktrace`.
 
-    * `:source` -- source path for better errors (use keywords for non-paths) - default
-      is `:<anonymous>`
+  * `:on-compile-error` -- callback when compilation fails; default
+    is `bad-compile`.
 
-    * `:on-compile-error` -- callback when compilation fails - default is bad-compile
+  * `:on-compile-warning` -- callback for any linting error; default
+    is `warn-compile`.
 
-    * `:on-compile-warning` -- callback for any linting error - default is warn-compile
+  * `:on-parse-error` -- callback when parsing fails; default is
+    `bad-parse`.
 
-    * `:evaluator` -- callback that executes thunks. Signature is (evaluator thunk source
-      env where)
+  * `:fiber-flags` -- flags to wrap the compilation fiber with;
+    default is `:ia`.
 
-    * `:on-status` -- callback when a value is evaluated - default is debug/stacktrace.
+  * `:evaluator` -- callback that executes thunks; signature is
+    `(evaluator thunk source env where)`.
 
-    * `:fiber-flags` -- what flags to wrap the compilation fiber with. Default is :ia.
+  * `:source` -- source path for better errors (use keywords for
+    non-paths); default is `:<anonymous>`.
 
-    * `:expander` -- an optional function that is called on each top level form before
-      being compiled.
+  * `:parser` -- custom parser that implements the same interface as
+    Janet's built-in parser.
 
-    * `:parser` -- provide a custom parser that implements the same interface as Janet's
-      built-in parser.
+  * `:read` -- function to get the next form; signature is `(read env
+    source)`; overrides all parsing.
 
-    * `:read` -- optional function to get the next form, called like `(read env source)`.
-      Overrides all parsing.
-  ```
+  * `:expander` -- function that is called on each top-level form
+    before being compiled.
+
+  Returns `(in env :exit-value env)` when complete.
+  ``
   [opts]
 
   (def {:env env
@@ -2675,17 +2971,17 @@
     (var resumeval nil)
     (def f
       (fiber/new
-        (fn []
+        (fn :compile-and-lint []
           (array/clear lints)
           (def res (compile source env where lints))
-          (unless (empty? lints)
+          (when (next lints)
             # Convert lint levels to numbers.
             (def levels (get env *lint-levels* lint-levels))
             (def lint-error (get env *lint-error*))
             (def lint-warning (get env *lint-warn*))
             (def lint-error (or (get levels lint-error lint-error) 0))
             (def lint-warning (or (get levels lint-warning lint-warning) 2))
-            (each [level line col msg] lints
+            (each [level line col msg] (distinct lints) # some macros might cause code to be duplicated. Avoid repeated messages.
               (def lvl (get lint-levels level 0))
               (cond
                 (<= lvl lint-error) (do
@@ -2940,7 +3236,6 @@
   (array/insert mp 0 [":all:" loader (fn :check-ext [x] (string/has-suffix? ext x))])
   mp)
 
-# Don't expose this externally yet - could break if custom module/paths is setup.
 (defn module/add-syspath
   ```
   Add a custom syspath to `module/paths` by duplicating all entries that being with `:sys:` and
@@ -2993,12 +3288,12 @@
     (x path)))
 
 (defn module/find
-  ```
-  Try to match a module or path name from the patterns in `module/paths`.
-  Returns a tuple (fullpath kind) where the kind is one of :source, :native,
-  or :image if the module is found, otherwise a tuple with nil followed by
-  an error message.
-  ```
+  ``
+  Try to match a module or path name from the patterns in
+  `module/paths`.  Returns a tuple `[fullpath kind]` where the kind is
+  one of `:source`, `:native`, or `:image` if the module is found,
+  otherwise a tuple with nil followed by an error message.
+  ``
   [path &opt find-all]
   (var ret nil)
   (def mp (dyn *module-paths* module/paths))
@@ -3051,14 +3346,16 @@
 (var- debugger-on-status-var nil)
 
 (defn debugger
-  "Run a repl-based debugger on a fiber. Optionally pass in a level
-  to differentiate nested debuggers."
-  [fiber &opt level]
+  ``
+  Run a repl-based debugger on a fiber `fib`. Optionally pass in a level to
+  differentiate nested debuggers.
+  ``
+  [fib &opt level]
   (default level 1)
-  (def nextenv (make-env (fiber/getenv fiber)))
-  (put nextenv :fiber fiber)
+  (def nextenv (make-env (fiber/getenv fib)))
+  (put nextenv :fiber fib)
   (put nextenv :debug-level level)
-  (put nextenv :signal (fiber/last-value fiber))
+  (put nextenv :signal (fiber/last-value fib))
 
   (merge-into nextenv debugger-env)
   (defn debugger-chunks [buf p]
@@ -3324,7 +3621,7 @@
   (def delimiters
     (if has-color
       {:code ["\e[97m" "\e[39m"]
-       :italics ["\e[4m" "\e[24m"]
+       :italics ["\e[3m" "\e[23m"]
        :bold ["\e[1m" "\e[22m"]}
       {:code ["`" "`"]
        :italics ["*" "*"]
@@ -3640,12 +3937,15 @@
     (print-index identity)))
 
 (defmacro doc
-  ``Shows documentation for the given symbol, or can show a list of available bindings.
-  If `sym` is a symbol, will look for documentation for that symbol. If `sym` is a string
-  or is not provided, will show all lexical and dynamic bindings in the current environment
-  containing that string (all bindings will be shown if no string is given).``
-  [&opt sym]
-  ~(,doc* ',sym))
+  ``
+  Shows documentation for `what` or lists binding names. If `what` is
+  a symbol, shows documentation for that symbol. If `what` is a
+  string, shows all lexical and dynamic binding names in the current
+  environment containing the string. If `what` is not provided, shows
+  all binding names.
+  ``
+  [&opt what]
+  ~(,doc* ',what))
 
 (defn doc-of
   `Searches all loaded modules in module/cache for a given binding and prints out its documentation.
@@ -3900,7 +4200,7 @@
   (defmacro ev/spawn
     ``
     Run some code in a new task fiber. This is shorthand for
-    `(ev/go (fn [] ;body))`."
+    `(ev/go (fn [] ;body))`.
     ``
     [& body]
     ~(,ev/go (fn :spawn [&] ,;body)))
@@ -3954,8 +4254,8 @@
     [sec & body]
     (with-syms [f]
       ~(as-macro ,let [,f (as-macro ,coro ,;body)]
-         (,ev/deadline ,sec nil ,f)
-         (,resume ,f))))
+                 (,ev/deadline ,sec nil ,f)
+                 (,resume ,f))))
 
   (defn- cancel-all [chan fibers reason]
     (each f fibers (ev/cancel f reason))
@@ -4005,16 +4305,21 @@
 (compwhen (dyn 'net/listen)
   (defn net/server
     ``
-    Starts a server with `net/listen`. Runs `net/accept-loop` asynchronously if
-    `handler` is set and `type` is `:stream` (the default). It is invalid to set
-    `handler` if `type` is `:datagram`. Returns the new server stream.
+    Starts a server with `net/listen`. Runs `net/accept-loop`
+    asynchronously if `handler` is set and `cntype` is `:stream` (the
+    default). It is invalid to set `handler` if `cntype` is
+    `:datagram`. Returns the new server stream.
     ``
-    [host port &opt handler type no-reuse]
-    (assert (not (and (= type :datagram) handler))
+    [host port &opt handler cntype no-reuse]
+    (assert (not (and (= cntype :datagram) handler))
             "handler not supported for :datagram servers")
-    (def s (net/listen host port type no-reuse))
-    (if handler
-      (ev/go (fn :net/server-handler [] (net/accept-loop s handler))))
+    (def s (net/listen host port cntype no-reuse))
+    (when handler
+      (ev/go (fn :net/server-handler [] (net/accept-loop s handler)))
+      # Ensure accept-loop has started before returning. Not completely needed, but avoids
+      # the possibility of closing `s` before `net/accept-loop` runs
+      # and getting an annoying error print from `:net/server-handler`
+      (ev/sleep 0))
     s))
 
 ###
@@ -4042,7 +4347,7 @@
 
 (compwhen (dyn 'ffi/native)
 
-  (defdyn *ffi-context* " Current native library for ffi/bind and other settings")
+  (defdyn *ffi-context* "Current native library for `ffi/defbind` and other settings")
 
   (defn- default-mangle
     [name &]
@@ -4064,8 +4369,8 @@
 
   (defmacro ffi/defbind-alias :flycheck
     "Generate bindings for native functions in a convenient manner.
-     Similar to defbind but allows for the janet function name to be
-     different than the FFI function."
+     Similar to `ffi/defbind` but allows for the janet function name
+     to be different than the FFI function."
     [name alias ret-type & body]
     (def real-ret-type (eval ret-type))
     (def meta (slice body 0 -2))
@@ -4086,9 +4391,9 @@
       (assertf (ffi/lookup (if lazy (llib) lib) raw-symbol) "failed to find ffi symbol %v" raw-symbol))
     (if lazy
       ~(as-macro ,defn ,alias ,;meta [,;formal-args]
-         (,ffi/call (,(delay (make-ptr))) (,(delay (make-sig))) ,;formal-args))
+                 (,ffi/call (,(delay (make-ptr))) (,(delay (make-sig))) ,;formal-args))
       ~(as-macro ,defn ,alias ,;meta [,;formal-args]
-         (,ffi/call ,(make-ptr) ,(make-sig) ,;formal-args))))
+                 (,ffi/call ,(make-ptr) ,(make-sig) ,;formal-args))))
 
   (defmacro ffi/defbind :flycheck
     "Generate bindings for native functions in a convenient manner."
@@ -4204,19 +4509,15 @@
   (def- seps {:windows "\\" :mingw "\\" :cygwin "\\"})
   (defn- sep [] (get seps (os/which) "/"))
 
-  (defn- bundle-rpath
-    [path]
-    (os/realpath path))
-
   (defn- bundle-dir
     [&opt bundle-name]
     (def s (sep))
-    (string (bundle-rpath (dyn *syspath*)) s "bundle" (if bundle-name s) bundle-name))
+    (string (os/realpath (dyn *syspath*)) s "bundle" (if bundle-name s) bundle-name))
 
   (defn- bundle-file
     [bundle-name filename]
     (def s (sep))
-    (string (bundle-rpath (dyn *syspath*)) s "bundle" s bundle-name s filename))
+    (string (os/realpath (dyn *syspath*)) s "bundle" s bundle-name s filename))
 
   (defn- get-manifest-filename
     [bundle-name]
@@ -4295,7 +4596,7 @@
     (def manifest (bundle/manifest bundle-name))
     (def dir (os/cwd))
     (def workdir (get manifest :local-source "."))
-    (def fixed-syspath (bundle-rpath (dyn *syspath*)))
+    (def fixed-syspath (os/realpath (dyn *syspath*)))
     (try
       (os/cd workdir)
       ([_] (print "cannot enter source directory " workdir " for bundle " bundle-name)))
@@ -4428,7 +4729,7 @@
     check). A user can register a hook by defining a function with the same name
     in the bundle script.``
     [path &keys config]
-    (def path (bundle-rpath path))
+    (def path (os/realpath path))
     (def s (sep))
     # Detect bundle name
     (def infofile-src1 (string path s "bundle" s "info.jdn"))
@@ -4517,7 +4818,7 @@
     (def install-hook (string dest-dir s "bundle" s "init.janet"))
     (edefer (rmrf dest-dir) # don't leave garbage on failure
       (def install-source @[])
-      (def syspath (bundle-rpath (dyn *syspath*)))
+      (def syspath (os/realpath (dyn *syspath*)))
       (when is-backup (copyrf (bundle-dir bundle-name) (string dest-dir s "old-bundle")))
       (each file files
         (def {:mode mode :permissions perm} (os/stat file))
@@ -4583,7 +4884,7 @@
     "Given a file path, figure out which bundle installed it."
     [path]
     (var ret nil)
-    (def rpath (bundle-rpath path))
+    (def rpath (os/realpath path))
     (each bundle-name (bundle/list)
       (def files (get (bundle/manifest bundle-name) :files []))
       (def has-file (index-of rpath files))
@@ -4669,7 +4970,7 @@
   (if (= x "") nil x)) # empty string is coerced to nil
 
 (defn- run-main
-  [env subargs arg]
+  [env subargs]
   (when-let [main (module/value env 'main true)]
     (def guard (if (get env :debug) :ydt :y))
     (defn wrap-main [&]
@@ -4679,7 +4980,9 @@
     (while (fiber/can-resume? f)
       (set res (resume f res))
       (when (not= :dead (fiber/status f))
-        ((debugger-on-status env) f res)))))
+        ((debugger-on-status env) f res)))
+    (break true))
+  false)
 
 (defdyn *args*
   "Dynamic bindings that will contain command line arguments at program start.")
@@ -4713,6 +5016,7 @@
    "-nocolor" "n"
    "-color" "N"
    "-library" "l"
+   "-tool" "t"
    "-install" "b"
    "-reinstall" "B"
    "-uninstall" "u"
@@ -4720,6 +5024,7 @@
    "-list" "L"
    "-prune" "P"
    "-lint-warn" "w"
+   "-bundle-hook" "z"
    "-lint-error" "x"})
 
 (defn- apply-color
@@ -4751,8 +5056,8 @@
 
   (when-let [jp (getenv-alias "JANET_PATH")]
     (def path-sep (if (index-of (os/which) [:windows :mingw]) ";" ":"))
-    (def paths (reverse! (string/split path-sep jp)))
-    (for i 1 (length paths)
+    (def paths (string/split path-sep jp))
+    (loop [i :down-to [(- (length paths) 1) 1]]
       (module/add-syspath (get paths i)))
     (setdyn *syspath* (first paths)))
   (if-let [jprofile (getenv-alias "JANET_PROFILE")] (setdyn *profilepath* jprofile))
@@ -4777,7 +5082,7 @@
                --help (-h)             : Show this help
                --version (-v)          : Print the version string
                --stdin (-s)            : Use raw stdin instead of getline like functionality
-               --eval (-e) code        : Execute a string of janet
+               --eval (-e) code        : Evaluate some code for side effects
                --expression (-E) code arguments... : Evaluate an expression as a short-fn with arguments
                --debug (-d)            : Set the debug flag in the REPL
                --repl (-r)             : Enter the REPL after running all scripts
@@ -4791,6 +5096,7 @@
                --nocolor (-n)          : Disable ANSI color output in the REPL
                --color (-N)            : Enable ANSI color output in the REPL
                --library (-l) lib      : Use a module before processing more arguments
+               --tool (-t) lib args... : Use a module before processing more arguments, and then call it's `main` function
                --lint-warn (-w) level  : Set the lint warning level - default is "normal"
                --lint-error (-x) level : Set the lint error level - default is "none"
                --install (-b) dirpath  : Install a bundle from a directory
@@ -4799,6 +5105,7 @@
                --update-all (-U)       : Reinstall all installed bundles
                --prune (-P)            : Uninstall all bundles that are orphaned
                --list (-L)             : List all installed bundles
+               --do-hook (-z) hooks... : Manually execute software lifecycle hooks from the ./bundle module
                --                      : Stop handling options
              ```)
            (os/exit 0)
@@ -4813,7 +5120,7 @@
      "n" (fn [&] (apply-color false) 1)
      "N" (fn [&] (apply-color true) 1)
      "m" (fn [i &] (setdyn *syspath* (in args (+ i 1))) 2)
-     "c" (fn c-switch [i &]
+     "c" (fn :c-switch [i &]
            (def path (in args (+ i 1)))
            (def e (dofile path))
            (def output-path
@@ -4826,15 +5133,32 @@
            (set no-file false)
            3)
      "-" (fn [&] (set handleopts false) 1)
-     "l" (fn l-switch [i &]
+     "l" (fn :l-switch [i &]
            (import* (in args (+ i 1))
                     :prefix "" :exit exit-on-error)
            2)
-     "e" (fn e-switch [i &]
+     "z" (fn :z-switch [i &]
+           (set no-file false)
+           (def m (require "./bundle" :exit exit-on-error))
+           (for j (inc i) (length args)
+             (def hook (module/value m (symbol (get args j))))
+             (unless hook (errorf "no hook found for %V" (get args j)))
+             (hook))
+           math/inf)
+     "t" (fn :t-switch [i &]
+           (set should-repl false)
+           (set no-file false)
+           (def lib (in args (+ i 1)))
+           (def tool-env (require lib :exit exit-on-error))
+           (def subargs (tuple/slice args (+ i 2)))
+           (put tool-env *args* subargs)
+           (assertf (run-main tool-env subargs) "no main found for module %s" lib)
+           math/inf)
+     "e" (fn :e-switch [i &]
            (set no-file false)
            (eval-string (in args (+ i 1)))
            2)
-     "E" (fn E-switch [i &]
+     "E" (fn :E-switch [i &]
            (set no-file false)
            (def subargs (array/slice args (+ i 2)))
            (def src ~(short-fn ,(parse (in args (+ i 1))) E-expression))
@@ -4890,7 +5214,7 @@
           (do
             (def env (load-image (slurp arg)))
             (put env *args* subargs)
-            (run-main env subargs arg))
+            (run-main env subargs))
           (do
             (def env (make-env))
             (put env *args* subargs)
@@ -4898,7 +5222,7 @@
               (flycheck arg :exit exit-on-error :env env)
               (do
                 (dofile arg :exit exit-on-error :env env)
-                (run-main env subargs arg)))))
+                (run-main env subargs)))))
         (set i lenargs))))
 
   (if (or should-repl no-file)
@@ -4927,6 +5251,8 @@
 ###
 ###
 
+(setdyn :optimize nil)
+
 (do
 
   # Modify root-env to remove private symbols and
@@ -4954,7 +5280,9 @@
   # Build dictionary for loading images
   (def load-dict (env-lookup root-env))
   (each [k v] (pairs load-dict)
-    (if (number? v) (put load-dict k nil)))
+    # Drop simple types, otherwise we get odd issues when loading foreign data from a different Janet version.
+    # It also doesn't usually save any space to encode these anyway.
+    (if (or (string? v) (keyword? v) (number? v)) (put load-dict k nil)))
   (merge-into load-image-dict load-dict)
 
   (def image

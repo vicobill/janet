@@ -188,7 +188,7 @@ static JanetSlot do_get(JanetFopts opts, JanetSlot *args) {
         janetc_copy(c, t, dflt_slot);
         if (target_is_default) janetc_freeslot(c, dflt_slot);
         int32_t current = janet_v_count(c->buffer);
-        c->buffer[label] |= (current - label) << 16;
+        c->buffer[label] |= (uint32_t)(current - label) << 16;
         return t;
     } else {
         return opreduce(opts, args, JOP_GET, 0, janet_wrap_nil(), janet_wrap_nil());
@@ -345,7 +345,7 @@ static JanetSlot compreduce(
     int32_t end = janet_v_count(c->buffer);
     for (i = 0; i < janet_v_count(labels); i++) {
         int32_t label = labels[i];
-        c->buffer[label] |= ((end - label) << 16);
+        c->buffer[label] |= ((uint32_t)(end - label) << 16);
     }
     janet_v_free(labels);
     return t;

@@ -325,7 +325,7 @@ static void marshal_one_def(MarshalState *st, JanetFuncDef *def, int flags) {
 
     /* Marshal closure bitset, if needed */
     if (def->flags & JANET_FUNCDEF_FLAG_HASCLOBITSET) {
-        janet_marshal_u32s(st, def->closure_bitset, ((def->slotcount + 31) >> 5));
+        janet_marshal_u32s(st, def->closure_bitset, ((def->slotcount - 1) >> 5) + 1);
     }
 }
 
@@ -431,6 +431,10 @@ void janet_marshal_abstract(JanetMarshalContext *ctx, void *abstract) {
     MarshalState *st = (MarshalState *)(ctx->m_state);
     Janet x = janet_wrap_abstract(abstract);
     MARK_SEEN();
+}
+
+int janet_marshal_flags(JanetMarshalContext *ctx) {
+    return ctx->flags;
 }
 
 static void marshal_one_abstract(MarshalState *st, Janet x, int flags) {
@@ -857,7 +861,7 @@ static const uint8_t *unmarshal_one_env(
             if (length == 0) {
                 janet_panic("invalid funcenv length");
             }
-            env->as.values = janet_malloc(sizeof(Janet) * (size_t) length);
+            env->as.values = array_allocate(sizeof(Janet), length);
             if (!env->as.values) {
                 JANET_OUT_OF_MEMORY;
             }
@@ -961,7 +965,7 @@ static const uint8_t *unmarshal_one_def(
 
         /* Unmarshal constants */
         if (constants_length) {
-            def->constants = janet_malloc(sizeof(Janet) * constants_length);
+            def->constants = array_allocate(sizeof(Janet), constants_length);
             if (!def->constants) {
                 JANET_OUT_OF_MEMORY;
             }
@@ -974,8 +978,7 @@ static const uint8_t *unmarshal_one_def(
 
         /* Unmarshal symbol map, if needed */
         if (def->flags & JANET_FUNCDEF_FLAG_HASSYMBOLMAP) {
-            size_t size = sizeof(JanetSymbolMap) * symbolmap_length;
-            def->symbolmap = janet_malloc(size);
+            def->symbolmap = array_allocate(sizeof(JanetSymbolMap), symbolmap_length);
             if (def->symbolmap == NULL) {
                 JANET_OUT_OF_MEMORY;
             }
@@ -994,7 +997,7 @@ static const uint8_t *unmarshal_one_def(
         }
 
         /* Unmarshal bytecode */
-        def->bytecode = janet_malloc(sizeof(uint32_t) * bytecode_length);
+        def->bytecode = array_allocate(sizeof(uint32_t), bytecode_length);
         if (!def->bytecode) {
             JANET_OUT_OF_MEMORY;
         }
@@ -1032,7 +1035,7 @@ static const uint8_t *unmarshal_one_def(
         /* Unmarshal source maps if needed */
         if (def->flags & JANET_FUNCDEF_FLAG_HASSOURCEMAP) {
             int32_t current = 0;
-            def->sourcemap = janet_malloc(sizeof(JanetSourceMapping) * (size_t) bytecode_length);
+            def->sourcemap = array_allocate(sizeof(JanetSourceMapping), bytecode_length);
             if (!def->sourcemap) {
                 JANET_OUT_OF_MEMORY;
             }
@@ -1047,8 +1050,8 @@ static const uint8_t *unmarshal_one_def(
 
         /* Unmarshal closure bitset if needed */
         if (def->flags & JANET_FUNCDEF_FLAG_HASCLOBITSET) {
-            int32_t n = (def->slotcount + 31) >> 5;
-            def->closure_bitset = janet_malloc(sizeof(uint32_t) * (size_t) n);
+            int32_t n = ((def->slotcount - 1) >> 5) + 1;
+            def->closure_bitset = array_allocate(sizeof(uint32_t), n);
             if (NULL == def->closure_bitset) {
                 JANET_OUT_OF_MEMORY;
             }
@@ -1056,8 +1059,10 @@ static const uint8_t *unmarshal_one_def(
         }
 
         /* Validate */
-        if (janet_verify(def))
-            janet_panic("funcdef has invalid bytecode");
+        int status;
+        if ((status = janet_verify(def))) {
+            janet_panicf("funcdef has invalid bytecode: %d", status);
+        }
 
         /* Set def */
         *out = def;
@@ -1111,8 +1116,13 @@ static const uint8_t *unmarshal_one_fiber(
     }
 
     /* Allocate stack memory */
-    fiber->capacity = fiber_stacktop + 10;
-    fiber->data = janet_malloc(sizeof(Janet) * fiber->capacity);
+    if (fiber_stacktop < INT32_MAX - 10) {
+        fiber->capacity = fiber_stacktop + 10;
+    } else {
+        /* Extra capacity is usually nice to avoid immediately reallocing on pushed arguments, but not needed */
+        fiber->capacity = INT32_MAX;
+    }
+    fiber->data = array_allocate(sizeof(Janet), fiber->capacity);
     if (!fiber->data) {
         JANET_OUT_OF_MEMORY;
     }
@@ -1296,6 +1306,10 @@ void *janet_unmarshal_abstract_threaded(JanetMarshalContext *ctx, size_t size) {
 #endif
 }
 
+int janet_unmarshal_flags(JanetMarshalContext *ctx) {
+    return ctx->flags;
+}
+
 static const uint8_t *unmarshal_one_abstract(UnmarshalState *st, const uint8_t *data, Janet *out, int flags) {
     Janet key;
     data = unmarshal_one(st, data, &key, flags + 1);
@@ -1472,7 +1486,7 @@ static const uint8_t *unmarshal_one(
                 /* Tuple */
                 Janet *tup = janet_tuple_begin(len);
                 int32_t flag = readint(st, &data);
-                janet_tuple_flag(tup) |= flag << 16;
+                janet_tuple_flag(tup) |= (int32_t)(((uint32_t) flag) << 16);  /* Avoid left shift of negative value */
                 for (int32_t i = 0; i < len; i++) {
                     data = unmarshal_one(st, data, tup + i, flags + 1);
                 }
@@ -1658,22 +1672,26 @@ Janet janet_unmarshal(
 
 JANET_CORE_FN(cfun_env_lookup,
               "(env-lookup env)",
-              "Creates a forward lookup table for unmarshalling from an environment. "
-              "To create a reverse lookup table, use the invert function to swap keys "
-              "and values in the returned table.") {
+              "Creates a forward lookup table for unmarshalling from an "
+              "environment `env`. To create a reverse lookup table, use "
+              "`invert` to swap keys and values in the returned table.") {
     janet_fixarity(argc, 1);
     JanetTable *env = janet_gettable(argv, 0);
     return janet_wrap_table(janet_env_lookup(env));
 }
 
 JANET_CORE_FN(cfun_marshal,
-              "(marshal x &opt reverse-lookup buffer no-cycles)",
-              "Marshal a value into a buffer and return the buffer. The buffer "
-              "can then later be unmarshalled to reconstruct the initial value. "
-              "Optionally, one can pass in a reverse lookup table to not marshal "
-              "aliased values that are found in the table. Then a forward "
-              "lookup table can be used to recover the original value when "
-              "unmarshalling.") {
+              "(marshal x &opt rev-lookup buf no-cycles)",
+              "Marshal a value, `x`, into a buffer and return the buffer. "
+              "The buffer can then later be unmarshalled to reconstruct the "
+              "initial value. Optionally, pass in a table, `rev-lookup`, to "
+              "specify aliased values to not marshal. Then a forward lookup "
+              "table can be used to recover the original value when "
+              "unmarshalling. If optional argument `buf` is provided, "
+              "marshal into and return that instead. The optional "
+              "`no-cycles` parameter will make `unmarshal` faster if it is "
+              "known that there are no cycles; will error if there are "
+              "cycles.") {
     janet_arity(argc, 1, 4);
     JanetBuffer *buffer;
     JanetTable *rreg = NULL;
@@ -1694,10 +1712,10 @@ JANET_CORE_FN(cfun_marshal,
 }
 
 JANET_CORE_FN(cfun_unmarshal,
-              "(unmarshal buffer &opt lookup)",
-              "Unmarshal a value from a buffer. An optional lookup table "
-              "can be provided to allow for aliases to be resolved. Returns the value "
-              "unmarshalled from the buffer.") {
+              "(unmarshal buf &opt lookup)",
+              "Unmarshal a value from a buffer, `buf`. Optionally provide "
+              "a table, `lookup`, to allow for aliases to be resolved. "
+              "Returns the value unmarshalled from `buf`.") {
     janet_sandbox_assert(JANET_SANDBOX_UNMARSHAL);
     janet_arity(argc, 1, 2);
     JanetByteView view = janet_getbytes(argv, 0);

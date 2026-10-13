@@ -50,6 +50,7 @@
 #endif
 
 #include <inttypes.h>
+#include <float.h>
 
 /* Base 64 lookup table for digits */
 const char janet_base64[65] =
@@ -277,7 +278,7 @@ int32_t janet_tablen(int32_t n) {
     n |= n >> 4;
     n |= n >> 8;
     n |= n >> 16;
-    return n + 1;
+    return n == INT32_MAX ? INT32_MAX : n + 1;
 }
 
 /* Avoid some undefined behavior that was common in the code base. */
@@ -286,9 +287,9 @@ void safe_memcpy(void *dest, const void *src, size_t len) {
     memcpy(dest, src, len);
 }
 
-/* Helper to find a value in a Janet struct or table. Returns the bucket
- * containing the key, or the first empty bucket if there is no such key. */
-const JanetKV *janet_dict_find(const JanetKV *buckets, int32_t cap, Janet key) {
+/* Helper to find a value in a Janet struct or table like janet_dict_find, for keys
+ * equaling stored key that is not bitwise identical to it. */
+const JanetKV *janet_dict_find_deep(const JanetKV *buckets, int32_t cap, Janet key) {
     int32_t index = janet_maphash(cap, janet_hash(key));
     int32_t i;
     const JanetKV *first_bucket = NULL;
@@ -301,7 +302,7 @@ const JanetKV *janet_dict_find(const JanetKV *buckets, int32_t cap, Janet key) {
             } else if (NULL == first_bucket) {
                 first_bucket = kv;
             }
-        } else if (janet_equals(kv->key, key)) {
+        } else if (janet_bitwise_same(kv->key, key) || janet_equals(kv->key, key)) {
             return buckets + i;
         }
     }
@@ -314,7 +315,7 @@ const JanetKV *janet_dict_find(const JanetKV *buckets, int32_t cap, Janet key) {
             } else if (NULL == first_bucket) {
                 first_bucket = kv;
             }
-        } else if (janet_equals(kv->key, key)) {
+        } else if (janet_bitwise_same(kv->key, key) || janet_equals(kv->key, key)) {
             return buckets + i;
         }
     }
@@ -573,8 +574,24 @@ static char *namebuf_name(NameBuf *namebuf, const char *suffix) {
     return (char *)(namebuf->buf);
 }
 
+/* Add a little bit of safety when using nanboxing on arm. Instead of inserting run-time checks everywhere, we are
+ * only doing it during registration which has much less cost (1 shift and mask). */
+static void janet_check_pointer_align(void *p) {
+    (void) p;
+#if defined(JANET_NANBOX_64) && JANET_NANBOX_64_POINTER_SHIFT != 0
+    union {
+        void *p;
+        uintptr_t u;
+    } un;
+    un.p = p;
+    janet_assert(!(un.u & (uintptr_t)((1 << JANET_NANBOX_64_POINTER_SHIFT) - 1)),
+                 "unaligned pointer wrap - cfunction pointers and abstract types must be aligned with this nanboxing configuration.");
+#endif
+}
+
 void janet_cfuns(JanetTable *env, const char *regprefix, const JanetReg *cfuns) {
     while (cfuns->name) {
+        janet_check_pointer_align(cfuns->cfun);
         Janet fun = janet_wrap_cfunction(cfuns->cfun);
         if (env) janet_def(env, cfuns->name, fun, cfuns->documentation);
         janet_registry_put(cfuns->cfun, cfuns->name, regprefix, NULL, 0);
@@ -584,6 +601,7 @@ void janet_cfuns(JanetTable *env, const char *regprefix, const JanetReg *cfuns) 
 
 void janet_cfuns_ext(JanetTable *env, const char *regprefix, const JanetRegExt *cfuns) {
     while (cfuns->name) {
+        janet_check_pointer_align(cfuns->cfun);
         Janet fun = janet_wrap_cfunction(cfuns->cfun);
         if (env) janet_def_sm(env, cfuns->name, fun, cfuns->documentation, cfuns->source_file, cfuns->source_line);
         janet_registry_put(cfuns->cfun, cfuns->name, regprefix, cfuns->source_file, cfuns->source_line);
@@ -595,6 +613,7 @@ void janet_cfuns_prefix(JanetTable *env, const char *regprefix, const JanetReg *
     NameBuf nb;
     if (env) namebuf_init(&nb, regprefix);
     while (cfuns->name) {
+        janet_check_pointer_align(cfuns->cfun);
         Janet fun = janet_wrap_cfunction(cfuns->cfun);
         if (env) janet_def(env, namebuf_name(&nb, cfuns->name), fun, cfuns->documentation);
         janet_registry_put(cfuns->cfun, cfuns->name, regprefix, NULL, 0);
@@ -607,6 +626,7 @@ void janet_cfuns_ext_prefix(JanetTable *env, const char *regprefix, const JanetR
     NameBuf nb;
     if (env) namebuf_init(&nb, regprefix);
     while (cfuns->name) {
+        janet_check_pointer_align(cfuns->cfun);
         Janet fun = janet_wrap_cfunction(cfuns->cfun);
         if (env) janet_def_sm(env, namebuf_name(&nb, cfuns->name), fun, cfuns->documentation, cfuns->source_file, cfuns->source_line);
         janet_registry_put(cfuns->cfun, cfuns->name, regprefix, cfuns->source_file, cfuns->source_line);
@@ -623,6 +643,7 @@ void janet_register(const char *name, JanetCFunction cfun) {
 /* Abstract type introspection */
 
 void janet_register_abstract_type(const JanetAbstractType *at) {
+    janet_check_pointer_align((void *) at);
     Janet sym = janet_csymbolv(at->name);
     Janet check = janet_table_get(janet_vm.abstract_registry, sym);
     if (!janet_checktype(check, JANET_NIL) && at != janet_unwrap_pointer(check)) {
@@ -655,6 +676,7 @@ void janet_core_def_sm(JanetTable *env, const char *name, Janet x, const void *p
 void janet_core_cfuns_ext(JanetTable *env, const char *regprefix, const JanetRegExt *cfuns) {
     (void) regprefix;
     while (cfuns->name) {
+        janet_check_pointer_align(cfuns->cfun);
         Janet fun = janet_wrap_cfunction(cfuns->cfun);
         janet_table_put(env, janet_csymbolv(cfuns->name), fun);
         janet_registry_put(cfuns->cfun, cfuns->name, regprefix, cfuns->source_file, cfuns->source_line);
@@ -889,6 +911,20 @@ int janet_checkuint16(Janet x) {
         return 0;
     double dval = janet_unwrap_number(x);
     return janet_checkuint16range(dval);
+}
+
+int janet_checkint8(Janet x) {
+    if (!janet_checktype(x, JANET_NUMBER))
+        return 0;
+    double dval = janet_unwrap_number(x);
+    return janet_checkint8range(dval);
+}
+
+int janet_checkuint8(Janet x) {
+    if (!janet_checktype(x, JANET_NUMBER))
+        return 0;
+    double dval = janet_unwrap_number(x);
+    return janet_checkuint8range(dval);
 }
 
 int janet_checksize(Janet x) {
@@ -1176,4 +1212,11 @@ void *(janet_calloc)(size_t nmemb, size_t size) {
 
 void *(janet_realloc)(void *ptr, size_t size) {
     return janet_realloc(ptr, size);
+}
+
+/* Avoid overflow and underflow, especially on 32-bit systems */
+void *array_allocate(size_t element_size, int32_t count) {
+    if (count < 0) return NULL;
+    if ((size_t) count > (SIZE_MAX / element_size)) return NULL;
+    return janet_malloc(element_size * count);
 }

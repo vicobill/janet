@@ -31,12 +31,12 @@
 # unsigned shift
 (assert (= 32768 (brushift 0x80000000 16)) "right shift unsigned 1")
 (assert-error "right shift unsigned 2" (= -32768 (brshift 0x80000000 16)))
-(assert (= -1 (brshift -1 16)) "right shift unsigned 3")
+(assert (= -1 (brshift -1 16)) "right shift 3")
 # non-immediate forms
 (assert (= 32768 (brushift 0x80000000 (+ 0 16))) "right shift unsigned non-immediate")
 (assert-error "right shift non-immediate" (= -32768 (brshift 0x80000000 (+ 0 16))))
-(assert (= -1 (brshift -1 (+ 0 16))) "right shift non-immediate 2")
-(assert (= 32768 (blshift 1 (+ 0 15))) "left shift non-immediate")
+(assert (= -1 (brshift -1 (|(+ 0 16)))) "right shift non-immediate 2")
+(assert (= 32768 (blshift 1 (|(+ 0 15)))) "left shift non-immediate")
 # 7e46ead
 (assert (< 1 2 3 4 5 6) "less than integers")
 (assert (< 1.0 2.0 3.0 4.0 5.0 6.0) "less than reals")
@@ -75,6 +75,8 @@
 (assert (deep= @[0 1 2 3] (range 3.999)) "range 3")
 (assert (deep= @[0.8 1.8 2.8 3.8] (range 0.8 3.999)) "range 4")
 (assert (deep= @[0.8 1.8 2.8 3.8] (range 0.8 3.999)) "range 5")
+(assert (deep= @[] (range 10 0 0)) "range 6")
+(assert (deep= @[] (range 0 10 0)) "range 7")
 
 (assert (< 1.0 nil false true
            (fiber/new (fn [] 1))
@@ -206,5 +208,16 @@
 (assert (= (macex1 '|(set (my-table [2 1]) 'foo))
            '(fn :short-fn [] (set (my-table [2 1]) (quote foo))))
         "Macro expand inside set preserves tuple type correctly")
+
+(assert-error "no infinite step range" (range 3 3 math/inf))
+
+# Issue #1790
+(assert-no-error "limit short-fn parameters 1" (macex1 '|$9999))
+(assert-error "limit short-fn parameters 2" (macex1 '|$10000))
+(assert-error "limit short-fn parameters 3" (macex1 '|$10001))
+(assert-error "limit short-fn parameters 4" (macex1 '|$100010))
+(assert-error "limit short-fn parameters 5" (macex1 '|$800010))
+(assert-error "limit short-fn parameters 6" (macex1 '|$8888888888888888888888888888888888888888888888888888888888888888888888888888888))
+(assert-error "limit short-fn parameters 7" (macex1 '|$8.8))
 
 (end-suite)

@@ -55,7 +55,7 @@ static JanetFiber *fiber_alloc(int32_t capacity) {
         capacity = 32;
     }
     fiber->capacity = capacity;
-    data = janet_malloc(sizeof(Janet) * (size_t) capacity);
+    data = array_allocate(sizeof(Janet), capacity);
     if (NULL == data) {
         JANET_OUT_OF_MEMORY;
     }
@@ -102,11 +102,11 @@ JanetFiber *janet_fiber(JanetFunction *callee, int32_t capacity, int32_t argc, c
 static void janet_fiber_refresh_memory(JanetFiber *fiber) {
     int32_t n = fiber->capacity;
     if (n) {
-        Janet *newData = janet_malloc(sizeof(Janet) * n);
+        Janet *newData = array_allocate(sizeof(Janet), n);
         if (NULL == newData) {
             JANET_OUT_OF_MEMORY;
         }
-        memcpy(newData, fiber->data, fiber->capacity * sizeof(Janet));
+        memcpy(newData, fiber->data, n * sizeof(Janet));
         janet_free(fiber->data);
         fiber->data = newData;
     }
@@ -180,7 +180,8 @@ void janet_fiber_pushn(JanetFiber *fiber, const Janet *arr, int32_t n) {
 /* Create a struct with n values. If n is odd, the last value is ignored. */
 static Janet make_struct_n(const Janet *args, int32_t n) {
     int32_t i = 0;
-    JanetKV *st = janet_struct_begin(n & (~1));
+    if (n & 1) n--;
+    JanetKV *st = janet_struct_begin(n);
     for (; i < n; i += 2) {
         janet_struct_put(st, args[i], args[i + 1]);
     }
@@ -228,6 +229,7 @@ int janet_fiber_funcframe(JanetFiber *fiber, JanetFunction *func) {
     /* Check varargs */
     if (func->def->flags & JANET_FUNCDEF_FLAG_VARARG) {
         int32_t tuplehead = fiber->frame + func->def->arity;
+        janet_assert(tuplehead > 0, "fiber stack overflow");
         int st = func->def->flags & JANET_FUNCDEF_FLAG_STRUCTARG;
         if (tuplehead >= oldtop) {
             fiber->data[tuplehead] = st
@@ -254,7 +256,7 @@ static void janet_env_detach(JanetFuncEnv *env) {
     /* Check for closure environment */
     if (env) {
         janet_env_valid(env);
-        int32_t len = env->length;
+        int32_t len = env->length; /* Maximum is 256 */
         size_t s = sizeof(Janet) * (size_t) len;
         Janet *vmem = janet_malloc(s);
         janet_vm.next_collection += (uint32_t) s;
@@ -346,9 +348,6 @@ int janet_fiber_funcframe_tail(JanetFiber *fiber, JanetFunction *func) {
 #endif
     }
 
-    Janet *stack = fiber->data + fiber->frame;
-    Janet *args = fiber->data + fiber->stackstart;
-
     /* Detach old function */
     if (NULL != janet_fiber_frame(fiber)->func)
         janet_env_detach(janet_fiber_frame(fiber)->env);
@@ -378,7 +377,7 @@ int janet_fiber_funcframe_tail(JanetFiber *fiber, JanetFunction *func) {
         stacksize = fiber->stacktop - fiber->stackstart;
     }
 
-    if (stacksize) memmove(stack, args, stacksize * sizeof(Janet));
+    if (stacksize) memmove(fiber->data + fiber->frame, fiber->data + fiber->stackstart, stacksize * sizeof(Janet));
 
     /* Nil unset locals (Needed for functional correctness) */
     for (i = fiber->frame + stacksize; i < nextframetop; ++i)
@@ -454,9 +453,9 @@ JanetFiber *janet_root_fiber(void) {
 /* CFuns */
 
 JANET_CORE_FN(cfun_fiber_getenv,
-              "(fiber/getenv fiber)",
-              "Gets the environment for a fiber. Returns nil if no such table is "
-              "set yet.") {
+              "(fiber/getenv fib)",
+              "Gets the environment for a fiber `fib`. Returns nil if no "
+              "such table is set yet.") {
     janet_fixarity(argc, 1);
     JanetFiber *fiber = janet_getfiber(argv, 0);
     return fiber->env ?
@@ -465,9 +464,9 @@ JANET_CORE_FN(cfun_fiber_getenv,
 }
 
 JANET_CORE_FN(cfun_fiber_setenv,
-              "(fiber/setenv fiber table)",
-              "Sets the environment table for a fiber. Set to nil to remove the current "
-              "environment.") {
+              "(fiber/setenv fib tab)",
+              "Sets the environment table for a fiber `fib` to `tab`. Set "
+              "to nil to remove the current environment.") {
     janet_fixarity(argc, 2);
     JanetFiber *fiber = janet_getfiber(argv, 0);
     if (janet_checktype(argv[1], JANET_NIL)) {
@@ -655,16 +654,16 @@ int janet_fiber_can_resume(JanetFiber *fiber) {
 }
 
 JANET_CORE_FN(cfun_fiber_can_resume,
-              "(fiber/can-resume? fiber)",
-              "Check if a fiber is finished and cannot be resumed.") {
+              "(fiber/can-resume? fib)",
+              "Check if a fiber `fib` is finished and cannot be resumed.") {
     janet_fixarity(argc, 1);
     JanetFiber *fiber = janet_getfiber(argv, 0);
     return janet_wrap_boolean(janet_fiber_can_resume(fiber));
 }
 
 JANET_CORE_FN(cfun_fiber_last_value,
-              "(fiber/last-value fiber)",
-              "Get the last value returned or signaled from the fiber.") {
+              "(fiber/last-value fib)",
+              "Get the last value returned or signaled from a fiber `fib`.") {
     janet_fixarity(argc, 1);
     JanetFiber *fiber = janet_getfiber(argv, 0);
     return fiber->last_value;

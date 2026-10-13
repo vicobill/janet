@@ -1,10 +1,30 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
-## Unreleased - ???
-- Documentation fixes
+## ??? - Unreleased
+- Bug fixes to ev/thread-chan and ev/select leaking GC roots in some cases
+- Add `-z` (`--do-hook`) flag to more succinctly execute bundle hooks such as "clean", "build", and "check".
+- Add `*optimize*` for some preliminary bytecode optimizations.
+  Set this dynamic binding to an integer between 0 and 3 to set the optimization level.
+- Expose bytecode optimization as an optional argument to the `asm` function.
+- Various documentation improvements
+
+## 1.42.1 - 2026-09-10
+- More changes to documentation.
+- Correct SONAME in Makefile
+
+## 1.42.0 - 2026-08-31
+- Add `:locale` option to `sandbox` to mask calling `os/setlocale`.
+- JANET_PATH will now be searched strictly left-to-right for modules.
+- Add `-t` (`--tool`) flag for using installed libraries as command line tools
+- Numerous documentation improvements and fixes
+- Add support for GNU/Hurd
+- Improve pretty printing layout for %M and %m modifiers to be more code-like.
+- Add filewatch support to BSD and macos.
+- Add linting support for shadowed bindings.
+- Add nanboxing support for Linux on ARM64 and turn on nanboxing by default on macos on ARM64 (aarch64).
 - ev/thread-chan deadlock bug fixed
-- Re-add removed support for non-blocking net/connect on windows.
+- Re-add removed support for non-blocking net/connect on windows with bug fixes.
 
 ## 1.41.2 - 2026-02-18
 - Fix regressions in `put` for arrays and buffers.

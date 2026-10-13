@@ -216,8 +216,8 @@ void janet_table_put(JanetTable *t, Janet key, Janet value) {
         } else {
             if (NULL == bucket || 2 * (t->count + t->deleted + 1) > t->capacity) {
                 janet_table_rehash(t, janet_tablen(2 * t->count + 2));
+                bucket = janet_table_find(t, key);
             }
-            bucket = janet_table_find(t, key);
             if (janet_checktype(bucket->value, JANET_BOOLEAN))
                 --t->deleted;
             bucket->key = key;
@@ -235,8 +235,8 @@ static void janet_table_put_no_overwrite(JanetTable *t, Janet key, Janet value) 
         return;
     if (NULL == bucket || 2 * (t->count + t->deleted + 1) > t->capacity) {
         janet_table_rehash(t, janet_tablen(2 * t->count + 2));
+        bucket = janet_table_find(t, key);
     }
-    bucket = janet_table_find(t, key);
     if (janet_checktype(bucket->value, JANET_BOOLEAN))
         --t->deleted;
     bucket->key = key;
@@ -260,7 +260,7 @@ JanetTable *janet_table_clone(JanetTable *table) {
     newTable->capacity = table->capacity;
     newTable->deleted = table->deleted;
     newTable->proto = table->proto;
-    newTable->data = janet_malloc(newTable->capacity * sizeof(JanetKV));
+    newTable->data = array_allocate(sizeof(JanetKV), newTable->capacity);
     if (NULL == newTable->data) {
         JANET_OUT_OF_MEMORY;
     }
@@ -384,7 +384,11 @@ JANET_CORE_FN(cfun_table_setproto,
 
 JANET_CORE_FN(cfun_table_tostruct,
               "(table/to-struct tab &opt proto)",
-              "Convert a table to a struct. Returns a new struct.") {
+              "Return a struct based on a table `tab`. If given, "
+              "the optional argument `proto` specifies the new "
+              "struct's prototype. Note that if `proto` is not "
+              "specified, the new struct will not have a "
+              "prototype.") {
     janet_arity(argc, 1, 2);
     JanetTable *t = janet_gettable(argv, 0);
     JanetStruct proto = janet_optstruct(argv, argc, 1, NULL);
